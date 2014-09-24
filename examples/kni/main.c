@@ -872,6 +872,9 @@ main(int argc, char** argv)
 			rte_exit(EXIT_FAILURE, "Configured invalid "
 						"port ID %u\n", i);
 
+	/* Initialize KNI subsystem */
+	rte_kni_init(nb_sys_ports);
+
 	/* Initialise each port */
 	for (port = 0; port < nb_sys_ports; port++) {
 		/* Skip ports that are not enabled */
