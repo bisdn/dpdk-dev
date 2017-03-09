@@ -40,5 +40,9 @@ DPDK_16.07 {
 	rte_mempool_populate_virt;
 	rte_mempool_register_ops;
 	rte_mempool_set_ops_byname;
+	mp_hdlr_init_ops_mp_mc;
+	mp_hdlr_init_ops_mp_sc;
+	mp_hdlr_init_ops_sp_mc;
+	mp_hdlr_init_ops_sp_sc;
 
 } DPDK_2.0;

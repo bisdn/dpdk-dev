@@ -560,6 +560,13 @@ int rte_mempool_register_ops(const struct rte_mempool_ops *ops);
 		rte_mempool_register_ops(&ops);			\
 	}
 
+#define MEMPOOL_OPS(hdl) extern void mp_hdlr_init_##hdl(void);
+MEMPOOL_OPS(ops_mp_mc)
+MEMPOOL_OPS(ops_sp_sc)
+MEMPOOL_OPS(ops_mp_sc)
+MEMPOOL_OPS(ops_sp_mc)
+MEMPOOL_OPS(ops_stack)
+
 /**
  * An object callback function for mempool.
  *
