@@ -31,7 +31,7 @@
 #define BNX2X_PMD_VER_PREFIX "BNX2X PMD"
 #define BNX2X_PMD_VERSION_MAJOR 1
 #define BNX2X_PMD_VERSION_MINOR 0
-#define BNX2X_PMD_VERSION_REVISION 1
+#define BNX2X_PMD_VERSION_REVISION 5
 #define BNX2X_PMD_VERSION_PATCH 1
 
 static inline const char *
@@ -1438,6 +1438,7 @@ bnx2x_fill_accept_flags(struct bnx2x_softc *sc, uint32_t rx_mode,
 
 		break;
 
+	case BNX2X_RX_MODE_ALLMULTI_PROMISC:
 	case BNX2X_RX_MODE_PROMISC:
 		/*
 		 * According to deffinition of SI mode, iface in promisc mode
@@ -2219,7 +2220,7 @@ int bnx2x_tx_encap(struct bnx2x_tx_queue *txq, struct rte_mbuf *m0)
 	}
 
 	PMD_TX_LOG(DEBUG,
-		   "start bd: nbytes %d flags %x vlan %x\n",
+		   "start bd: nbytes %d flags %x vlan %x",
 		   tx_start_bd->nbytes,
 		   tx_start_bd->bd_flags.as_bitfield,
 		   tx_start_bd->vlan_or_ethertype);

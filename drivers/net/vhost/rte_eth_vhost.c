@@ -33,27 +33,26 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdbool.h>
-#ifdef RTE_LIBRTE_VHOST_NUMA
-#include <numaif.h>
-#endif
 
 #include <rte_mbuf.h>
 #include <rte_ethdev.h>
+#include <rte_ethdev_vdev.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
 #include <rte_vdev.h>
 #include <rte_kvargs.h>
-#include <rte_virtio_net.h>
+#include <rte_vhost.h>
 #include <rte_spinlock.h>
 
 #include "rte_eth_vhost.h"
+
+enum {VIRTIO_RXQ, VIRTIO_TXQ, VIRTIO_QNUM};
 
 #define ETH_VHOST_IFACE_ARG		"iface"
 #define ETH_VHOST_QUEUES_ARG		"queues"
 #define ETH_VHOST_CLIENT_ARG		"client"
 #define ETH_VHOST_DEQUEUE_ZERO_COPY	"dequeue-zero-copy"
-
-static const char *drivername = "VHOST PMD";
+#define VHOST_MAX_PKT_BURST 32
 
 static const char *valid_arguments[] = {
 	ETH_VHOST_IFACE_ARG,
@@ -112,12 +111,11 @@ struct vhost_queue {
 };
 
 struct pmd_internal {
+	rte_atomic32_t dev_attached;
 	char *dev_name;
 	char *iface_name;
 	uint16_t max_queues;
-	uint64_t flags;
-
-	volatile uint16_t once;
+	rte_atomic32_t started;
 };
 
 struct internal_list {
@@ -130,9 +128,6 @@ static struct internal_list_head internal_list =
 	TAILQ_HEAD_INITIALIZER(internal_list);
 
 static pthread_mutex_t internal_list_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static rte_atomic16_t nb_started_ports;
-static pthread_t session_th;
 
 static struct rte_eth_link pmd_link = {
 		.link_speed = 10000,
@@ -324,6 +319,7 @@ vhost_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 				*(uint64_t *)(((char *)vq)
 				+ vhost_rxport_stat_strings[t].offset);
 		}
+		xstats[count].id = count;
 		count++;
 	}
 	for (t = 0; t < VHOST_NB_XSTATS_TXPORT; t++) {
@@ -336,6 +332,7 @@ vhost_dev_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 				*(uint64_t *)(((char *)vq)
 				+ vhost_txport_stat_strings[t].offset);
 		}
+		xstats[count].id = count;
 		count++;
 	}
 	return count;
@@ -392,6 +389,7 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
 	struct vhost_queue *r = q;
 	uint16_t i, nb_rx = 0;
+	uint16_t nb_receive = nb_bufs;
 
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		return 0;
@@ -402,8 +400,20 @@ eth_vhost_rx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		goto out;
 
 	/* Dequeue packets from guest TX queue */
-	nb_rx = rte_vhost_dequeue_burst(r->vid,
-			r->virtqueue_id, r->mb_pool, bufs, nb_bufs);
+	while (nb_receive) {
+		uint16_t nb_pkts;
+		uint16_t num = (uint16_t)RTE_MIN(nb_receive,
+						 VHOST_MAX_PKT_BURST);
+
+		nb_pkts = rte_vhost_dequeue_burst(r->vid, r->virtqueue_id,
+						  r->mb_pool, &bufs[nb_rx],
+						  num);
+
+		nb_rx += nb_pkts;
+		nb_receive -= nb_pkts;
+		if (nb_pkts < num)
+			break;
+	}
 
 	r->stats.pkts += nb_rx;
 
@@ -425,6 +435,7 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 {
 	struct vhost_queue *r = q;
 	uint16_t i, nb_tx = 0;
+	uint16_t nb_send = nb_bufs;
 
 	if (unlikely(rte_atomic32_read(&r->allow_queuing) == 0))
 		return 0;
@@ -435,8 +446,19 @@ eth_vhost_tx(void *q, struct rte_mbuf **bufs, uint16_t nb_bufs)
 		goto out;
 
 	/* Enqueue packets to guest RX queue */
-	nb_tx = rte_vhost_enqueue_burst(r->vid,
-			r->virtqueue_id, bufs, nb_bufs);
+	while (nb_send) {
+		uint16_t nb_pkts;
+		uint16_t num = (uint16_t)RTE_MIN(nb_send,
+						 VHOST_MAX_PKT_BURST);
+
+		nb_pkts = rte_vhost_enqueue_burst(r->vid, r->virtqueue_id,
+						  &bufs[nb_tx], num);
+
+		nb_tx += nb_pkts;
+		nb_send -= nb_pkts;
+		if (nb_pkts < num)
+			break;
+	}
 
 	r->stats.pkts += nb_tx;
 	r->stats.missed_pkts += nb_bufs - nb_tx;
@@ -495,6 +517,38 @@ find_internal_resource(char *ifname)
 	return list;
 }
 
+static void
+update_queuing_status(struct rte_eth_dev *dev)
+{
+	struct pmd_internal *internal = dev->data->dev_private;
+	struct vhost_queue *vq;
+	unsigned int i;
+	int allow_queuing = 1;
+
+	if (rte_atomic32_read(&internal->started) == 0 ||
+	    rte_atomic32_read(&internal->dev_attached) == 0)
+		allow_queuing = 0;
+
+	/* Wait until rx/tx_pkt_burst stops accessing vhost device */
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		vq = dev->data->rx_queues[i];
+		if (vq == NULL)
+			continue;
+		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		while (rte_atomic32_read(&vq->while_queuing))
+			rte_pause();
+	}
+
+	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		vq = dev->data->tx_queues[i];
+		if (vq == NULL)
+			continue;
+		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		while (rte_atomic32_read(&vq->while_queuing))
+			rte_pause();
+	}
+}
+
 static int
 new_device(int vid)
 {
@@ -541,23 +595,15 @@ new_device(int vid)
 		vq->port = eth_dev->data->port_id;
 	}
 
-	for (i = 0; i < rte_vhost_get_queue_num(vid) * VIRTIO_QNUM; i++)
+	for (i = 0; i < rte_vhost_get_vring_num(vid); i++)
 		rte_vhost_enable_guest_notification(vid, i, 0);
+
+	rte_vhost_get_mtu(vid, &eth_dev->data->mtu);
 
 	eth_dev->data->dev_link.link_status = ETH_LINK_UP;
 
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
-		vq = eth_dev->data->rx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 1);
-	}
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
-		vq = eth_dev->data->tx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 1);
-	}
+	rte_atomic32_set(&internal->dev_attached, 1);
+	update_queuing_status(eth_dev);
 
 	RTE_LOG(INFO, PMD, "New connection established\n");
 
@@ -570,6 +616,7 @@ static void
 destroy_device(int vid)
 {
 	struct rte_eth_dev *eth_dev;
+	struct pmd_internal *internal;
 	struct vhost_queue *vq;
 	struct internal_list *list;
 	char ifname[PATH_MAX];
@@ -583,24 +630,10 @@ destroy_device(int vid)
 		return;
 	}
 	eth_dev = list->eth_dev;
+	internal = eth_dev->data->dev_private;
 
-	/* Wait until rx/tx_pkt_burst stops accessing vhost device */
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++) {
-		vq = eth_dev->data->rx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 0);
-		while (rte_atomic32_read(&vq->while_queuing))
-			rte_pause();
-	}
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++) {
-		vq = eth_dev->data->tx_queues[i];
-		if (vq == NULL)
-			continue;
-		rte_atomic32_set(&vq->allow_queuing, 0);
-		while (rte_atomic32_read(&vq->while_queuing))
-			rte_pause();
-	}
+	rte_atomic32_set(&internal->dev_attached, 0);
+	update_queuing_status(eth_dev);
 
 	eth_dev->data->dev_link.link_status = ETH_LINK_DOWN;
 
@@ -661,6 +694,12 @@ vring_state_changed(int vid, uint16_t vring, int enable)
 
 	return 0;
 }
+
+static struct vhost_device_ops vhost_ops = {
+	.new_device          = new_device,
+	.destroy_device      = destroy_device,
+	.vring_state_changed = vring_state_changed,
+};
 
 int
 rte_eth_vhost_get_queue_event(uint8_t port_id,
@@ -728,69 +767,15 @@ rte_eth_vhost_get_vid_from_port_id(uint8_t port_id)
 	return vid;
 }
 
-static void *
-vhost_driver_session(void *param __rte_unused)
-{
-	static struct virtio_net_device_ops vhost_ops;
-
-	/* set vhost arguments */
-	vhost_ops.new_device = new_device;
-	vhost_ops.destroy_device = destroy_device;
-	vhost_ops.vring_state_changed = vring_state_changed;
-	if (rte_vhost_driver_callback_register(&vhost_ops) < 0)
-		RTE_LOG(ERR, PMD, "Can't register callbacks\n");
-
-	/* start event handling */
-	rte_vhost_driver_session_start();
-
-	return NULL;
-}
-
-static int
-vhost_driver_session_start(void)
-{
-	int ret;
-
-	ret = pthread_create(&session_th,
-			NULL, vhost_driver_session, NULL);
-	if (ret)
-		RTE_LOG(ERR, PMD, "Can't create a thread\n");
-
-	return ret;
-}
-
-static void
-vhost_driver_session_stop(void)
-{
-	int ret;
-
-	ret = pthread_cancel(session_th);
-	if (ret)
-		RTE_LOG(ERR, PMD, "Can't cancel the thread\n");
-
-	ret = pthread_join(session_th, NULL);
-	if (ret)
-		RTE_LOG(ERR, PMD, "Can't join the thread\n");
-}
-
 static int
 eth_dev_start(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal = dev->data->dev_private;
-	int ret = 0;
 
-	if (rte_atomic16_cmpset(&internal->once, 0, 1)) {
-		ret = rte_vhost_driver_register(internal->iface_name,
-						internal->flags);
-		if (ret)
-			return ret;
-	}
+	rte_atomic32_set(&internal->started, 1);
+	update_queuing_status(dev);
 
-	/* We need only one message handling thread */
-	if (rte_atomic16_add_return(&nb_started_ports, 1) == 1)
-		ret = vhost_driver_session_start();
-
-	return ret;
+	return 0;
 }
 
 static void
@@ -798,11 +783,45 @@ eth_dev_stop(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal = dev->data->dev_private;
 
-	if (rte_atomic16_cmpset(&internal->once, 1, 0))
-		rte_vhost_driver_unregister(internal->iface_name);
+	rte_atomic32_set(&internal->started, 0);
+	update_queuing_status(dev);
+}
 
-	if (rte_atomic16_sub_return(&nb_started_ports, 1) == 0)
-		vhost_driver_session_stop();
+static void
+eth_dev_close(struct rte_eth_dev *dev)
+{
+	struct pmd_internal *internal;
+	struct internal_list *list;
+	unsigned int i;
+
+	internal = dev->data->dev_private;
+	if (!internal)
+		return;
+
+	eth_dev_stop(dev);
+
+	rte_vhost_driver_unregister(internal->iface_name);
+
+	list = find_internal_resource(internal->iface_name);
+	if (!list)
+		return;
+
+	pthread_mutex_lock(&internal_list_lock);
+	TAILQ_REMOVE(&internal_list, list, next);
+	pthread_mutex_unlock(&internal_list_lock);
+	rte_free(list);
+
+	for (i = 0; i < dev->data->nb_rx_queues; i++)
+		rte_free(dev->data->rx_queues[i]);
+	for (i = 0; i < dev->data->nb_tx_queues; i++)
+		rte_free(dev->data->tx_queues[i]);
+
+	rte_free(dev->data->mac_addrs);
+	free(internal->dev_name);
+	free(internal->iface_name);
+	rte_free(internal);
+
+	dev->data->dev_private = NULL;
 }
 
 static int
@@ -861,7 +880,6 @@ eth_dev_info(struct rte_eth_dev *dev,
 		return;
 	}
 
-	dev_info->driver_name = drivername;
 	dev_info->max_mac_addrs = 1;
 	dev_info->max_rx_pktlen = (uint32_t)-1;
 	dev_info->max_rx_queues = internal->max_queues;
@@ -939,46 +957,33 @@ eth_queue_release(void *q)
 }
 
 static int
+eth_tx_done_cleanup(void *txq __rte_unused, uint32_t free_cnt __rte_unused)
+{
+	/*
+	 * vHost does not hang onto mbuf. eth_vhost_tx() copies packet data
+	 * and releases mbuf, so nothing to cleanup.
+	 */
+	return 0;
+}
+
+static int
 eth_link_update(struct rte_eth_dev *dev __rte_unused,
 		int wait_to_complete __rte_unused)
 {
 	return 0;
 }
 
-/**
- * Disable features in feature_mask. Returns 0 on success.
- */
-int
-rte_eth_vhost_feature_disable(uint64_t feature_mask)
-{
-	return rte_vhost_feature_disable(feature_mask);
-}
-
-/**
- * Enable features in feature_mask. Returns 0 on success.
- */
-int
-rte_eth_vhost_feature_enable(uint64_t feature_mask)
-{
-	return rte_vhost_feature_enable(feature_mask);
-}
-
-/* Returns currently supported vhost features */
-uint64_t
-rte_eth_vhost_feature_get(void)
-{
-	return rte_vhost_feature_get();
-}
-
 static const struct eth_dev_ops ops = {
 	.dev_start = eth_dev_start,
 	.dev_stop = eth_dev_stop,
+	.dev_close = eth_dev_close,
 	.dev_configure = eth_dev_configure,
 	.dev_infos_get = eth_dev_info,
 	.rx_queue_setup = eth_rx_queue_setup,
 	.tx_queue_setup = eth_tx_queue_setup,
 	.rx_queue_release = eth_queue_release,
 	.tx_queue_release = eth_queue_release,
+	.tx_done_cleanup = eth_tx_done_cleanup,
 	.link_update = eth_link_update,
 	.stats_get = eth_stats_get,
 	.stats_reset = eth_stats_reset,
@@ -987,10 +992,13 @@ static const struct eth_dev_ops ops = {
 	.xstats_get_names = vhost_dev_xstats_get_names,
 };
 
+static struct rte_vdev_driver pmd_vhost_drv;
+
 static int
-eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
-		     const unsigned numa_node, uint64_t flags)
+eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
+	int16_t queues, const unsigned int numa_node, uint64_t flags)
 {
+	const char *name = rte_vdev_device_name(dev);
 	struct rte_eth_dev_data *data = NULL;
 	struct pmd_internal *internal = NULL;
 	struct rte_eth_dev *eth_dev = NULL;
@@ -1001,15 +1009,11 @@ eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 	RTE_LOG(INFO, PMD, "Creating VHOST-USER backend on numa socket %u\n",
 		numa_node);
 
-	/* now do all data allocation - for eth_dev structure, dummy pci driver
-	 * and internal (private) data
+	/* now do all data allocation - for eth_dev structure and internal
+	 * (private) data
 	 */
 	data = rte_zmalloc_socket(name, sizeof(*data), 0, numa_node);
 	if (data == NULL)
-		goto error;
-
-	internal = rte_zmalloc_socket(name, sizeof(*internal), 0, numa_node);
-	if (internal == NULL)
 		goto error;
 
 	list = rte_zmalloc_socket(name, sizeof(*list), 0, numa_node);
@@ -1017,7 +1021,7 @@ eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 		goto error;
 
 	/* reserve an ethdev entry */
-	eth_dev = rte_eth_dev_allocate(name);
+	eth_dev = rte_eth_vdev_allocate(dev, sizeof(*internal));
 	if (eth_dev == NULL)
 		goto error;
 
@@ -1032,21 +1036,18 @@ eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 	if (vring_state == NULL)
 		goto error;
 
-	TAILQ_INIT(&eth_dev->link_intr_cbs);
-
 	/* now put it all together
 	 * - store queue data in internal,
-	 * - store numa_node info in ethdev data
 	 * - point eth_dev_data to internals
 	 * - and point eth_dev structure to new eth_dev_data structure
 	 */
+	internal = eth_dev->data->dev_private;
 	internal->dev_name = strdup(name);
 	if (internal->dev_name == NULL)
 		goto error;
 	internal->iface_name = strdup(iface_name);
 	if (internal->iface_name == NULL)
 		goto error;
-	internal->flags = flags;
 
 	list->eth_dev = eth_dev;
 	pthread_mutex_lock(&internal_list_lock);
@@ -1056,36 +1057,47 @@ eth_dev_vhost_create(const char *name, char *iface_name, int16_t queues,
 	rte_spinlock_init(&vring_state->lock);
 	vring_states[eth_dev->data->port_id] = vring_state;
 
-	data->dev_private = internal;
-	data->port_id = eth_dev->data->port_id;
-	memmove(data->name, eth_dev->data->name, sizeof(data->name));
+	/* We'll replace the 'data' originally allocated by eth_dev. So the
+	 * vhost PMD resources won't be shared between multi processes.
+	 */
+	rte_memcpy(data, eth_dev->data, sizeof(*data));
+	eth_dev->data = data;
+
 	data->nb_rx_queues = queues;
 	data->nb_tx_queues = queues;
 	internal->max_queues = queues;
 	data->dev_link = pmd_link;
 	data->mac_addrs = eth_addr;
-
-	/* We'll replace the 'data' originally allocated by eth_dev. So the
-	 * vhost PMD resources won't be shared between multi processes.
-	 */
-	eth_dev->data = data;
-	eth_dev->dev_ops = &ops;
-	eth_dev->driver = NULL;
 	data->dev_flags =
 		RTE_ETH_DEV_DETACHABLE | RTE_ETH_DEV_INTR_LSC;
-	data->kdrv = RTE_KDRV_NONE;
-	data->drv_name = internal->dev_name;
-	data->numa_node = numa_node;
+
+	eth_dev->dev_ops = &ops;
 
 	/* finally assign rx and tx ops */
 	eth_dev->rx_pkt_burst = eth_vhost_rx;
 	eth_dev->tx_pkt_burst = eth_vhost_tx;
 
+	if (rte_vhost_driver_register(iface_name, flags))
+		goto error;
+
+	if (rte_vhost_driver_callback_register(iface_name, &vhost_ops) < 0) {
+		RTE_LOG(ERR, PMD, "Can't register callbacks\n");
+		goto error;
+	}
+
+	if (rte_vhost_driver_start(iface_name) < 0) {
+		RTE_LOG(ERR, PMD, "Failed to start driver for %s\n",
+			iface_name);
+		goto error;
+	}
+
 	return data->port_id;
 
 error:
-	if (internal)
+	if (internal) {
+		free(internal->iface_name);
 		free(internal->dev_name);
+	}
 	rte_free(vring_state);
 	rte_free(eth_addr);
 	if (eth_dev)
@@ -1126,7 +1138,7 @@ open_int(const char *key __rte_unused, const char *value, void *extra_args)
 }
 
 static int
-rte_pmd_vhost_probe(const char *name, const char *params)
+rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 {
 	struct rte_kvargs *kvlist = NULL;
 	int ret = 0;
@@ -1136,9 +1148,10 @@ rte_pmd_vhost_probe(const char *name, const char *params)
 	int client_mode = 0;
 	int dequeue_zero_copy = 0;
 
-	RTE_LOG(INFO, PMD, "Initializing pmd_vhost for %s\n", name);
+	RTE_LOG(INFO, PMD, "Initializing pmd_vhost for %s\n",
+		rte_vdev_device_name(dev));
 
-	kvlist = rte_kvargs_parse(params, valid_arguments);
+	kvlist = rte_kvargs_parse(rte_vdev_device_args(dev), valid_arguments);
 	if (kvlist == NULL)
 		return -1;
 
@@ -1181,7 +1194,11 @@ rte_pmd_vhost_probe(const char *name, const char *params)
 			flags |= RTE_VHOST_USER_DEQUEUE_ZERO_COPY;
 	}
 
-	eth_dev_vhost_create(name, iface_name, queues, rte_socket_id(), flags);
+	if (dev->device.numa_node == SOCKET_ID_ANY)
+		dev->device.numa_node = rte_socket_id();
+
+	eth_dev_vhost_create(dev, iface_name, queues, dev->device.numa_node,
+		flags);
 
 out_free:
 	rte_kvargs_free(kvlist);
@@ -1189,13 +1206,12 @@ out_free:
 }
 
 static int
-rte_pmd_vhost_remove(const char *name)
+rte_pmd_vhost_remove(struct rte_vdev_device *dev)
 {
+	const char *name;
 	struct rte_eth_dev *eth_dev = NULL;
-	struct pmd_internal *internal;
-	struct internal_list *list;
-	unsigned int i;
 
+	name = rte_vdev_device_name(dev);
 	RTE_LOG(INFO, PMD, "Un-Initializing pmd_vhost for %s\n", name);
 
 	/* find an ethdev entry */
@@ -1203,35 +1219,12 @@ rte_pmd_vhost_remove(const char *name)
 	if (eth_dev == NULL)
 		return -ENODEV;
 
-	internal = eth_dev->data->dev_private;
-	if (internal == NULL)
-		return -ENODEV;
-
-	list = find_internal_resource(internal->iface_name);
-	if (list == NULL)
-		return -ENODEV;
-
-	pthread_mutex_lock(&internal_list_lock);
-	TAILQ_REMOVE(&internal_list, list, next);
-	pthread_mutex_unlock(&internal_list_lock);
-	rte_free(list);
-
-	eth_dev_stop(eth_dev);
+	eth_dev_close(eth_dev);
 
 	rte_free(vring_states[eth_dev->data->port_id]);
 	vring_states[eth_dev->data->port_id] = NULL;
 
-	free(internal->dev_name);
-	free(internal->iface_name);
-
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++)
-		rte_free(eth_dev->data->rx_queues[i]);
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++)
-		rte_free(eth_dev->data->tx_queues[i]);
-
-	rte_free(eth_dev->data->mac_addrs);
 	rte_free(eth_dev->data);
-	rte_free(internal);
 
 	rte_eth_dev_release_port(eth_dev);
 

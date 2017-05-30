@@ -60,6 +60,7 @@
 #define ENIC_RQ_MAX		16
 #define ENIC_CQ_MAX		(ENIC_WQ_MAX + (ENIC_RQ_MAX / 2))
 #define ENIC_INTR_MAX		(ENIC_CQ_MAX + 2)
+#define ENIC_MAX_MAC_ADDR	64
 
 #define VLAN_ETH_HLEN           18
 
@@ -102,6 +103,7 @@ struct enic_fdir {
 struct enic_soft_stats {
 	rte_atomic64_t rx_nombuf;
 	rte_atomic64_t rx_packet_errors;
+	rte_atomic64_t tx_oversized;
 };
 
 struct enic_memzone_entry {
@@ -277,8 +279,8 @@ extern void enic_dev_stats_get(struct enic *enic,
 	struct rte_eth_stats *r_stats);
 extern void enic_dev_stats_clear(struct enic *enic);
 extern void enic_add_packet_filter(struct enic *enic);
-extern void enic_set_mac_address(struct enic *enic, uint8_t *mac_addr);
-extern void enic_del_mac_address(struct enic *enic);
+int enic_set_mac_address(struct enic *enic, uint8_t *mac_addr);
+void enic_del_mac_address(struct enic *enic, int mac_index);
 extern unsigned int enic_cleanup_wq(struct enic *enic, struct vnic_wq *wq);
 extern void enic_send_pkt(struct enic *enic, struct vnic_wq *wq,
 			  struct rte_mbuf *tx_pkt, unsigned short len,
@@ -301,8 +303,7 @@ int enic_link_update(struct enic *enic);
 void enic_fdir_info(struct enic *enic);
 void enic_fdir_info_get(struct enic *enic, struct rte_eth_fdir_info *stats);
 void copy_fltr_v1(struct filter_v2 *fltr, struct rte_eth_fdir_input *input,
-		  struct rte_eth_fdir_masks *masks);
-void copy_fltr_v2(__rte_unused struct filter_v2 *fltr,
-		  __rte_unused struct rte_eth_fdir_input *input,
 		  __rte_unused struct rte_eth_fdir_masks *masks);
+void copy_fltr_v2(struct filter_v2 *fltr, struct rte_eth_fdir_input *input,
+		  struct rte_eth_fdir_masks *masks);
 #endif /* _ENIC_H_ */

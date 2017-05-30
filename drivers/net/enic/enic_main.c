@@ -137,6 +137,7 @@ static void enic_clear_soft_stats(struct enic *enic)
 	struct enic_soft_stats *soft_stats = &enic->soft_stats;
 	rte_atomic64_clear(&soft_stats->rx_nombuf);
 	rte_atomic64_clear(&soft_stats->rx_packet_errors);
+	rte_atomic64_clear(&soft_stats->tx_oversized);
 }
 
 static void enic_init_soft_stats(struct enic *enic)
@@ -144,6 +145,7 @@ static void enic_init_soft_stats(struct enic *enic)
 	struct enic_soft_stats *soft_stats = &enic->soft_stats;
 	rte_atomic64_init(&soft_stats->rx_nombuf);
 	rte_atomic64_init(&soft_stats->rx_packet_errors);
+	rte_atomic64_init(&soft_stats->tx_oversized);
 	enic_clear_soft_stats(enic);
 }
 
@@ -183,42 +185,36 @@ void enic_dev_stats_get(struct enic *enic, struct rte_eth_stats *r_stats)
 	r_stats->obytes = stats->tx.tx_bytes_ok;
 
 	r_stats->ierrors = stats->rx.rx_errors + stats->rx.rx_drop;
-	r_stats->oerrors = stats->tx.tx_errors;
+	r_stats->oerrors = stats->tx.tx_errors
+			   + rte_atomic64_read(&soft_stats->tx_oversized);
 
 	r_stats->imissed = stats->rx.rx_no_bufs + rx_truncated;
 
 	r_stats->rx_nombuf = rte_atomic64_read(&soft_stats->rx_nombuf);
 }
 
-void enic_del_mac_address(struct enic *enic)
+void enic_del_mac_address(struct enic *enic, int mac_index)
 {
-	if (vnic_dev_del_addr(enic->vdev, enic->mac_addr))
+	struct rte_eth_dev *eth_dev = enic->rte_dev;
+	uint8_t *mac_addr = eth_dev->data->mac_addrs[mac_index].addr_bytes;
+
+	if (vnic_dev_del_addr(enic->vdev, mac_addr))
 		dev_err(enic, "del mac addr failed\n");
 }
 
-void enic_set_mac_address(struct enic *enic, uint8_t *mac_addr)
+int enic_set_mac_address(struct enic *enic, uint8_t *mac_addr)
 {
 	int err;
 
 	if (!is_eth_addr_valid(mac_addr)) {
 		dev_err(enic, "invalid mac address\n");
-		return;
+		return -EINVAL;
 	}
-
-	err = vnic_dev_del_addr(enic->vdev, enic->mac_addr);
-	if (err) {
-		dev_err(enic, "del mac addr failed\n");
-		return;
-	}
-
-	ether_addr_copy((struct ether_addr *)mac_addr,
-		(struct ether_addr *)enic->mac_addr);
 
 	err = vnic_dev_add_addr(enic->vdev, mac_addr);
-	if (err) {
+	if (err)
 		dev_err(enic, "add mac addr failed\n");
-		return;
-	}
+	return err;
 }
 
 static void
@@ -426,8 +422,7 @@ int enic_link_update(struct enic *enic)
 }
 
 static void
-enic_intr_handler(__rte_unused struct rte_intr_handle *handle,
-	void *arg)
+enic_intr_handler(void *arg)
 {
 	struct rte_eth_dev *dev = (struct rte_eth_dev *)arg;
 	struct enic *enic = pmd_priv(dev);
@@ -1308,13 +1303,14 @@ static int enic_dev_init(struct enic *enic)
 	/* Get the supported filters */
 	enic_fdir_info(enic);
 
-	eth_dev->data->mac_addrs = rte_zmalloc("enic_mac_addr", ETH_ALEN, 0);
+	eth_dev->data->mac_addrs = rte_zmalloc("enic_mac_addr", ETH_ALEN
+						* ENIC_MAX_MAC_ADDR, 0);
 	if (!eth_dev->data->mac_addrs) {
 		dev_err(enic, "mac addr storage alloc failed, aborting.\n");
 		return -1;
 	}
 	ether_addr_copy((struct ether_addr *) enic->mac_addr,
-		&eth_dev->data->mac_addrs[0]);
+			eth_dev->data->mac_addrs);
 
 	vnic_dev_set_reset_flag(enic->vdev, 0);
 

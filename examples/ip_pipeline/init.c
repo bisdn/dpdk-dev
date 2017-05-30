@@ -69,7 +69,8 @@ static void
 app_init_core_map(struct app_params *app)
 {
 	APP_LOG(app, HIGH, "Initializing CPU core map ...");
-	app->core_map = cpu_core_map_init(4, 32, 4, 0);
+	app->core_map = cpu_core_map_init(RTE_MAX_NUMA_NODES, RTE_MAX_LCORE,
+				4, 0);
 
 	if (app->core_map == NULL)
 		rte_panic("Cannot create CPU core map\n");
@@ -78,11 +79,14 @@ app_init_core_map(struct app_params *app)
 		cpu_core_map_print(app->core_map);
 }
 
+/* Core Mask String in Hex Representation */
+#define APP_CORE_MASK_STRING_SIZE ((64 * APP_CORE_MASK_SIZE) / 8 * 2 + 1)
+
 static void
 app_init_core_mask(struct app_params *app)
 {
-	uint64_t mask = 0;
 	uint32_t i;
+	char core_mask_str[APP_CORE_MASK_STRING_SIZE];
 
 	for (i = 0; i < app->n_pipelines; i++) {
 		struct app_pipeline_params *p = &app->pipeline_params[i];
@@ -96,17 +100,18 @@ app_init_core_mask(struct app_params *app)
 		if (lcore_id < 0)
 			rte_panic("Cannot create CPU core mask\n");
 
-		mask |= 1LLU << lcore_id;
+		app_core_enable_in_core_mask(app, lcore_id);
 	}
 
-	app->core_mask = mask;
-	APP_LOG(app, HIGH, "CPU core mask = 0x%016" PRIx64, app->core_mask);
+	app_core_build_core_mask_string(app, core_mask_str);
+	APP_LOG(app, HIGH, "CPU core mask = 0x%s", core_mask_str);
 }
 
 static void
 app_init_eal(struct app_params *app)
 {
 	char buffer[256];
+	char core_mask_str[APP_CORE_MASK_STRING_SIZE];
 	struct app_eal_params *p = &app->eal_params;
 	uint32_t n_args = 0;
 	uint32_t i;
@@ -114,7 +119,8 @@ app_init_eal(struct app_params *app)
 
 	app->eal_argv[n_args++] = strdup(app->app_name);
 
-	snprintf(buffer, sizeof(buffer), "-c%" PRIx64, app->core_mask);
+	app_core_build_core_mask_string(app, core_mask_str);
+	snprintf(buffer, sizeof(buffer), "-c%s", core_mask_str);
 	app->eal_argv[n_args++] = strdup(buffer);
 
 	if (p->coremap) {
@@ -324,16 +330,14 @@ app_init_mempool(struct app_params *app)
 		struct app_mempool_params *p = &app->mempool_params[i];
 
 		APP_LOG(app, HIGH, "Initializing %s ...", p->name);
-		app->mempool[i] = rte_mempool_create(
-				p->name,
-				p->pool_size,
-				p->buffer_size,
-				p->cache_size,
-				sizeof(struct rte_pktmbuf_pool_private),
-				rte_pktmbuf_pool_init, NULL,
-				rte_pktmbuf_init, NULL,
-				p->cpu_socket_id,
-				0);
+		app->mempool[i] = rte_pktmbuf_pool_create(
+			p->name,
+			p->pool_size,
+			p->cache_size,
+			0, /* priv_size */
+			p->buffer_size -
+				sizeof(struct rte_mbuf), /* mbuf data size */
+			p->cpu_socket_id);
 
 		if (app->mempool[i] == NULL)
 			rte_panic("%s init error\n", p->name);
@@ -713,7 +717,8 @@ app_link_up_internal(struct app_params *app, struct app_link_params *cp)
 
 	/* PMD link up */
 	status = rte_eth_dev_set_link_up(cp->pmd_id);
-	if (status < 0)
+	/* Do not panic if PMD does not provide link up functionality */
+	if (status < 0 && status != -ENOTSUP)
 		rte_panic("%s (%" PRIu32 "): PMD set link up error %"
 			PRId32 "\n", cp->name, cp->pmd_id, status);
 
@@ -729,7 +734,8 @@ app_link_down_internal(struct app_params *app, struct app_link_params *cp)
 
 	/* PMD link down */
 	status = rte_eth_dev_set_link_down(cp->pmd_id);
-	if (status < 0)
+	/* Do not panic if PMD does not provide link down functionality */
+	if (status < 0 && status != -ENOTSUP)
 		rte_panic("%s (%" PRIu32 "): PMD set link down error %"
 			PRId32 "\n", cp->name, cp->pmd_id, status);
 
