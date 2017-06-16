@@ -72,7 +72,7 @@
 #endif
 #define IXGBE_HWSTRIP_BITMAP_SIZE (IXGBE_MAX_RX_QUEUE_NUM / (sizeof(uint32_t) * NBBY))
 
-/* EITR Inteval is in 2048ns uinits for 1G and 10G link */
+/* EITR Interval is in 2048ns uinits for 1G and 10G link */
 #define IXGBE_EITR_INTERVAL_UNIT_NS	2048
 #define IXGBE_EITR_ITR_INT_SHIFT       3
 #define IXGBE_EITR_INTERVAL_US(us) \
@@ -189,6 +189,7 @@ struct ixgbe_fdir_rule {
 	uint32_t fdirflags; /* drop or forward */
 	uint32_t soft_id; /* an unique value for this rule */
 	uint8_t queue; /* assigned rx queue */
+	uint8_t flex_bytes_offset;
 };
 
 struct ixgbe_hw_fdir_info {
@@ -450,9 +451,9 @@ struct ixgbe_adapter {
 	struct ixgbe_mirror_info    mr_data;
 	struct ixgbe_vf_info        *vfdata;
 	struct ixgbe_uta_info       uta_info;
-#ifdef RTE_NIC_BYPASS
+#ifdef RTE_LIBRTE_IXGBE_BYPASS
 	struct ixgbe_bypass_info    bps;
-#endif /* RTE_NIC_BYPASS */
+#endif /* RTE_LIBRTE_IXGBE_BYPASS */
 	struct ixgbe_filter_info    filter;
 	struct ixgbe_l2_tn_info     l2_tn;
 	struct ixgbe_bw_conf        bw_conf;
@@ -463,9 +464,6 @@ struct ixgbe_adapter {
 	struct rte_timecounter      rx_tstamp_tc;
 	struct rte_timecounter      tx_tstamp_tc;
 };
-
-#define IXGBE_DEV_TO_PCI(eth_dev) \
-	RTE_DEV_TO_PCI((eth_dev)->device)
 
 #define IXGBE_DEV_PRIVATE_TO_HW(adapter)\
 	(&((struct ixgbe_adapter *)adapter)->hw)
@@ -624,6 +622,8 @@ void ixgbe_filterlist_flush(void);
  */
 int ixgbe_fdir_configure(struct rte_eth_dev *dev);
 int ixgbe_fdir_set_input_mask(struct rte_eth_dev *dev);
+int ixgbe_fdir_set_flexbytes_offset(struct rte_eth_dev *dev,
+				    uint16_t offset);
 int ixgbe_fdir_filter_program(struct rte_eth_dev *dev,
 			      struct ixgbe_fdir_rule *rule,
 			      bool del, bool update);

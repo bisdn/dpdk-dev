@@ -278,7 +278,7 @@ eth_ark_dev_init(struct rte_eth_dev *dev)
 	ret = check_for_ext(ark);
 	if (ret)
 		return ret;
-	pci_dev = ARK_DEV_TO_PCI(dev);
+	pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 	rte_eth_copy_pci_info(dev, pci_dev);
 
 	/* Use dummy function until setup */
@@ -516,11 +516,7 @@ eth_ark_dev_uninit(struct rte_eth_dev *dev)
 	dev->dev_ops = NULL;
 	dev->rx_pkt_burst = NULL;
 	dev->tx_pkt_burst = NULL;
-	if (dev->data->mac_addrs)
-		rte_free(dev->data->mac_addrs);
-	if (dev->data)
-		rte_free(dev->data);
-
+	rte_free(dev->data->mac_addrs);
 	return 0;
 }
 
@@ -588,7 +584,11 @@ eth_ark_dev_start(struct rte_eth_dev *dev)
 		/* Delay packet generatpr start allow the hardware to be ready
 		 * This is only used for sanity checking with internal generator
 		 */
-		pthread_create(&thread, NULL, delay_pg_start, ark);
+		if (pthread_create(&thread, NULL, delay_pg_start, ark)) {
+			PMD_DRV_LOG(ERR, "Could not create pktgen "
+				    "starter thread\n");
+			return -1;
+		}
 	}
 
 	if (ark->user_ext.dev_start)
@@ -636,7 +636,7 @@ eth_ark_dev_stop(struct rte_eth_dev *dev)
 	}
 
 	/* Stop DDM */
-	/* Wait up to 0.1 second.  each stop is upto 1000 * 10 useconds */
+	/* Wait up to 0.1 second.  each stop is up to 1000 * 10 useconds */
 	for (i = 0; i < 10; i++) {
 		status = ark_ddm_stop(ark->ddm.v, 1);
 		if (status == 0)
@@ -751,7 +751,7 @@ eth_ark_dev_info_get(struct rte_eth_dev *dev,
 				ETH_LINK_SPEED_40G |
 				ETH_LINK_SPEED_50G |
 				ETH_LINK_SPEED_100G);
-	dev_info->pci_dev = ARK_DEV_TO_PCI(dev);
+	dev_info->pci_dev = RTE_ETH_DEV_TO_PCI(dev);
 }
 
 static int
@@ -898,6 +898,12 @@ process_file_args(const char *key, const char *value, void *extra_args)
 	char line[ARK_MAX_ARG_LEN];
 	int  size = 0;
 	int first = 1;
+
+	if (file == NULL) {
+		PMD_DRV_LOG(ERR, "Unable to open "
+			    "config file %s\n", value);
+		return -1;
+	}
 
 	while (fgets(line, sizeof(line), file)) {
 		size += strlen(line);

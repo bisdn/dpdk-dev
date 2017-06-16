@@ -94,6 +94,9 @@
 #ifdef RTE_LIBRTE_I40E_PMD
 #include <rte_pmd_i40e.h>
 #endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+#include <rte_pmd_bnxt.h>
+#endif
 #include "testpmd.h"
 
 static struct cmdline *testpmd_cl;
@@ -523,7 +526,6 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"   Flush (default) or don't flush RX streams before"
 			" forwarding. Mainly used with PCAP drivers.\n\n"
 
-			#ifdef RTE_NIC_BYPASS
 			"set bypass mode (normal|bypass|isolate) (port_id)\n"
 			"   Set the bypass mode for the lowest port on bypass enabled"
 			" NIC.\n\n"
@@ -546,7 +548,7 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"show bypass config (port_id)\n"
 			"   Show the bypass configuration for a bypass enabled NIC"
 			" using the lowest port on the NIC.\n\n"
-#endif
+
 #ifdef RTE_LIBRTE_PMD_BOND
 			"create bonded device (mode) (socket)\n"
 			"	Create a new bonded device with specific bonding mode and socket.\n\n"
@@ -904,6 +906,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"flow list {port_id} [group {group_id}] [...]\n"
 			"    List existing flow rules sorted by priority,"
 			" filtered by group identifiers.\n\n"
+
+			"flow isolate {port_id} {boolean}\n"
+			"    Restrict ingress traffic to the defined"
+			" flow rules\n\n"
 		);
 	}
 }
@@ -3904,7 +3910,6 @@ cmdline_parse_inst_t cmd_set_link_check = {
 	},
 };
 
-#ifdef RTE_NIC_BYPASS
 /* *** SET NIC BYPASS MODE *** */
 struct cmd_set_bypass_mode_result {
 	cmdline_fixed_string_t set;
@@ -3921,19 +3926,23 @@ cmd_set_bypass_mode_parsed(void *parsed_result,
 {
 	struct cmd_set_bypass_mode_result *res = parsed_result;
 	portid_t port_id = res->port_id;
-	uint32_t bypass_mode = RTE_BYPASS_MODE_NORMAL;
+	int32_t rc = -EINVAL;
+
+#ifdef RTE_LIBRTE_IXGBE_BYPASS
+	uint32_t bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NORMAL;
 
 	if (!strcmp(res->value, "bypass"))
-		bypass_mode = RTE_BYPASS_MODE_BYPASS;
+		bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_BYPASS;
 	else if (!strcmp(res->value, "isolate"))
-		bypass_mode = RTE_BYPASS_MODE_ISOLATE;
+		bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_ISOLATE;
 	else
-		bypass_mode = RTE_BYPASS_MODE_NORMAL;
+		bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NORMAL;
 
 	/* Set the bypass mode for the relevant port. */
-	if (0 != rte_eth_dev_bypass_state_set(port_id, &bypass_mode)) {
+	rc = rte_pmd_ixgbe_bypass_state_set(port_id, &bypass_mode);
+#endif
+	if (rc != 0)
 		printf("\t Failed to set bypass mode for port = %d.\n", port_id);
-	}
 }
 
 cmdline_parse_token_string_t cmd_setbypass_mode_set =
@@ -3983,51 +3992,57 @@ cmd_set_bypass_event_parsed(void *parsed_result,
 		__attribute__((unused)) struct cmdline *cl,
 		__attribute__((unused)) void *data)
 {
-	int32_t rc;
+	int32_t rc = -EINVAL;
 	struct cmd_set_bypass_event_result *res = parsed_result;
 	portid_t port_id = res->port_id;
-	uint32_t bypass_event = RTE_BYPASS_EVENT_NONE;
-	uint32_t bypass_mode = RTE_BYPASS_MODE_NORMAL;
+
+#ifdef RTE_LIBRTE_IXGBE_BYPASS
+	uint32_t bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_NONE;
+	uint32_t bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NORMAL;
 
 	if (!strcmp(res->event_value, "timeout"))
-		bypass_event = RTE_BYPASS_EVENT_TIMEOUT;
+		bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_TIMEOUT;
 	else if (!strcmp(res->event_value, "os_on"))
-		bypass_event = RTE_BYPASS_EVENT_OS_ON;
+		bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_OS_ON;
 	else if (!strcmp(res->event_value, "os_off"))
-		bypass_event = RTE_BYPASS_EVENT_OS_OFF;
+		bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_OS_OFF;
 	else if (!strcmp(res->event_value, "power_on"))
-		bypass_event = RTE_BYPASS_EVENT_POWER_ON;
+		bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_POWER_ON;
 	else if (!strcmp(res->event_value, "power_off"))
-		bypass_event = RTE_BYPASS_EVENT_POWER_OFF;
+		bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_POWER_OFF;
 	else
-		bypass_event = RTE_BYPASS_EVENT_NONE;
+		bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_NONE;
 
 	if (!strcmp(res->mode_value, "bypass"))
-		bypass_mode = RTE_BYPASS_MODE_BYPASS;
+		bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_BYPASS;
 	else if (!strcmp(res->mode_value, "isolate"))
-		bypass_mode = RTE_BYPASS_MODE_ISOLATE;
+		bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_ISOLATE;
 	else
-		bypass_mode = RTE_BYPASS_MODE_NORMAL;
+		bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NORMAL;
 
 	/* Set the watchdog timeout. */
-	if (bypass_event == RTE_BYPASS_EVENT_TIMEOUT) {
+	if (bypass_event == RTE_PMD_IXGBE_BYPASS_EVENT_TIMEOUT) {
 
 		rc = -EINVAL;
-		if (!RTE_BYPASS_TMT_VALID(bypass_timeout) ||
-				(rc = rte_eth_dev_wd_timeout_store(port_id,
-				bypass_timeout)) != 0) {
+		if (RTE_PMD_IXGBE_BYPASS_TMT_VALID(bypass_timeout)) {
+			rc = rte_pmd_ixgbe_bypass_wd_timeout_store(port_id,
+							   bypass_timeout);
+		}
+		if (rc != 0) {
 			printf("Failed to set timeout value %u "
-				"for port %d, errto code: %d.\n",
-				bypass_timeout, port_id, rc);
+			"for port %d, errto code: %d.\n",
+			bypass_timeout, port_id, rc);
 		}
 	}
 
 	/* Set the bypass event to transition to bypass mode. */
-	if (0 != rte_eth_dev_bypass_event_store(port_id,
-			bypass_event, bypass_mode)) {
-		printf("\t Failed to set bypass event for port = %d.\n", port_id);
-	}
+	rc = rte_pmd_ixgbe_bypass_event_store(port_id, bypass_event,
+					      bypass_mode);
+#endif
 
+	if (rc != 0)
+		printf("\t Failed to set bypass event for port = %d.\n",
+		       port_id);
 }
 
 cmdline_parse_token_string_t cmd_setbypass_event_set =
@@ -4084,24 +4099,26 @@ cmd_set_bypass_timeout_parsed(void *parsed_result,
 		__attribute__((unused)) struct cmdline *cl,
 		__attribute__((unused)) void *data)
 {
-	struct cmd_set_bypass_timeout_result *res = parsed_result;
+	__rte_unused struct cmd_set_bypass_timeout_result *res = parsed_result;
 
+#ifdef RTE_LIBRTE_IXGBE_BYPASS
 	if (!strcmp(res->value, "1.5"))
-		bypass_timeout = RTE_BYPASS_TMT_1_5_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_1_5_SEC;
 	else if (!strcmp(res->value, "2"))
-		bypass_timeout = RTE_BYPASS_TMT_2_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_2_SEC;
 	else if (!strcmp(res->value, "3"))
-		bypass_timeout = RTE_BYPASS_TMT_3_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_3_SEC;
 	else if (!strcmp(res->value, "4"))
-		bypass_timeout = RTE_BYPASS_TMT_4_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_4_SEC;
 	else if (!strcmp(res->value, "8"))
-		bypass_timeout = RTE_BYPASS_TMT_8_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_8_SEC;
 	else if (!strcmp(res->value, "16"))
-		bypass_timeout = RTE_BYPASS_TMT_16_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_16_SEC;
 	else if (!strcmp(res->value, "32"))
-		bypass_timeout = RTE_BYPASS_TMT_32_SEC;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_32_SEC;
 	else
-		bypass_timeout = RTE_BYPASS_TMT_OFF;
+		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_OFF;
+#endif
 }
 
 cmdline_parse_token_string_t cmd_setbypass_timeout_set =
@@ -4145,17 +4162,19 @@ cmd_show_bypass_config_parsed(void *parsed_result,
 		__attribute__((unused)) void *data)
 {
 	struct cmd_show_bypass_config_result *res = parsed_result;
+	portid_t port_id = res->port_id;
+	int rc = -EINVAL;
+#ifdef RTE_LIBRTE_IXGBE_BYPASS
 	uint32_t event_mode;
 	uint32_t bypass_mode;
-	portid_t port_id = res->port_id;
 	uint32_t timeout = bypass_timeout;
 	int i;
 
-	static const char * const timeouts[RTE_BYPASS_TMT_NUM] =
+	static const char * const timeouts[RTE_PMD_IXGBE_BYPASS_TMT_NUM] =
 		{"off", "1.5", "2", "3", "4", "8", "16", "32"};
-	static const char * const modes[RTE_BYPASS_MODE_NUM] =
+	static const char * const modes[RTE_PMD_IXGBE_BYPASS_MODE_NUM] =
 		{"UNKNOWN", "normal", "bypass", "isolate"};
-	static const char * const events[RTE_BYPASS_EVENT_NUM] = {
+	static const char * const events[RTE_PMD_IXGBE_BYPASS_EVENT_NUM] = {
 		"NONE",
 		"OS/board on",
 		"power supply on",
@@ -4165,37 +4184,41 @@ cmd_show_bypass_config_parsed(void *parsed_result,
 	int num_events = (sizeof events) / (sizeof events[0]);
 
 	/* Display the bypass mode.*/
-	if (0 != rte_eth_dev_bypass_state_show(port_id, &bypass_mode)) {
+	if (rte_pmd_ixgbe_bypass_state_show(port_id, &bypass_mode) != 0) {
 		printf("\tFailed to get bypass mode for port = %d\n", port_id);
 		return;
 	}
 	else {
-		if (!RTE_BYPASS_MODE_VALID(bypass_mode))
-			bypass_mode = RTE_BYPASS_MODE_NONE;
+		if (!RTE_PMD_IXGBE_BYPASS_MODE_VALID(bypass_mode))
+			bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NONE;
 
 		printf("\tbypass mode    = %s\n",  modes[bypass_mode]);
 	}
 
 	/* Display the bypass timeout.*/
-	if (!RTE_BYPASS_TMT_VALID(timeout))
-		timeout = RTE_BYPASS_TMT_OFF;
+	if (!RTE_PMD_IXGBE_BYPASS_TMT_VALID(timeout))
+		timeout = RTE_PMD_IXGBE_BYPASS_TMT_OFF;
 
 	printf("\tbypass timeout = %s\n", timeouts[timeout]);
 
 	/* Display the bypass events and associated modes. */
-	for (i = RTE_BYPASS_EVENT_START; i < num_events; i++) {
+	for (i = RTE_PMD_IXGBE_BYPASS_EVENT_START; i < num_events; i++) {
 
-		if (0 != rte_eth_dev_bypass_event_show(port_id, i, &event_mode)) {
+		if (rte_pmd_ixgbe_bypass_event_show(port_id, i, &event_mode)) {
 			printf("\tFailed to get bypass mode for event = %s\n",
 				events[i]);
 		} else {
-			if (!RTE_BYPASS_MODE_VALID(event_mode))
-				event_mode = RTE_BYPASS_MODE_NONE;
+			if (!RTE_PMD_IXGBE_BYPASS_MODE_VALID(event_mode))
+				event_mode = RTE_PMD_IXGBE_BYPASS_MODE_NONE;
 
 			printf("\tbypass event: %-16s = %s\n", events[i],
 				modes[event_mode]);
 		}
 	}
+#endif
+	if (rc != 0)
+		printf("\tFailed to get bypass configuration for port = %d\n",
+		       port_id);
 }
 
 cmdline_parse_token_string_t cmd_showbypass_config_show =
@@ -4224,7 +4247,6 @@ cmdline_parse_inst_t cmd_show_bypass_config = {
 		NULL,
 	},
 };
-#endif
 
 #ifdef RTE_LIBRTE_PMD_BOND
 /* *** SET BONDING MODE *** */
@@ -6781,6 +6803,7 @@ cmdline_parse_inst_t cmd_set_vf_traffic = {
 		NULL,
 	},
 };
+#endif /* RTE_LIBRTE_IXGBE_PMD */
 
 /* *** CONFIGURE VF RECEIVE MODE *** */
 struct cmd_set_vf_rxmode {
@@ -6799,7 +6822,7 @@ cmd_set_vf_rxmode_parsed(void *parsed_result,
 		       __attribute__((unused)) struct cmdline *cl,
 		       __attribute__((unused)) void *data)
 {
-	int ret;
+	int ret = -ENOTSUP;
 	uint16_t rx_mode = 0;
 	struct cmd_set_vf_rxmode *res = parsed_result;
 
@@ -6815,7 +6838,16 @@ cmd_set_vf_rxmode_parsed(void *parsed_result,
 			rx_mode |= ETH_VMDQ_ACCEPT_MULTICAST;
 	}
 
-	ret = rte_pmd_ixgbe_set_vf_rxmode(res->port_id, res->vf_id, rx_mode, (uint8_t)is_on);
+#ifdef RTE_LIBRTE_IXGBE_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_ixgbe_set_vf_rxmode(res->port_id, res->vf_id,
+						  rx_mode, (uint8_t)is_on);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_rxmode(res->port_id, res->vf_id,
+						 rx_mode, (uint8_t)is_on);
+#endif
 	if (ret < 0)
 		printf("bad VF receive mode parameter, return code = %d \n",
 		ret);
@@ -6863,7 +6895,6 @@ cmdline_parse_inst_t cmd_set_vf_rxmode = {
 		NULL,
 	},
 };
-#endif
 
 /* *** ADD MAC ADDRESS FILTER FOR A VF OF A PORT *** */
 struct cmd_vf_mac_addr_result {
@@ -6959,6 +6990,11 @@ cmd_vf_rx_vlan_filter_parsed(void *parsed_result,
 #ifdef RTE_LIBRTE_I40E_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_set_vf_vlan_filter(res->port_id,
+				res->vlan_id, res->vf_mask, is_add);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_filter(res->port_id,
 				res->vlan_id, res->vf_mask, is_add);
 #endif
 
@@ -7086,7 +7122,6 @@ cmdline_parse_inst_t cmd_queue_rate_limit = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* *** SET RATE LIMIT FOR A VF OF A PORT *** */
 struct cmd_vf_rate_limit_result {
 	cmdline_fixed_string_t set;
@@ -7165,7 +7200,6 @@ cmdline_parse_inst_t cmd_vf_rate_limit = {
 		NULL,
 	},
 };
-#endif
 
 /* *** ADD TUNNEL FILTER OF A PORT *** */
 struct cmd_tunnel_filter_result {
@@ -11012,6 +11046,11 @@ cmd_set_vf_vlan_anti_spoof_parsed(
 		ret = rte_pmd_i40e_set_vf_vlan_anti_spoof(res->port_id,
 				res->vf_id, is_on);
 #endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_anti_spoof(res->port_id,
+				res->vf_id, is_on);
+#endif
 
 	switch (ret) {
 	case 0:
@@ -11111,6 +11150,11 @@ cmd_set_vf_mac_anti_spoof_parsed(
 #ifdef RTE_LIBRTE_I40E_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_set_vf_mac_anti_spoof(res->port_id,
+			res->vf_id, is_on);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_mac_anti_spoof(res->port_id,
 			res->vf_id, is_on);
 #endif
 
@@ -11214,6 +11258,11 @@ cmd_set_vf_vlan_stripq_parsed(
 		ret = rte_pmd_i40e_set_vf_vlan_stripq(res->port_id,
 			res->vf_id, is_on);
 #endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_stripq(res->port_id,
+			res->vf_id, is_on);
+#endif
 
 	switch (ret) {
 	case 0:
@@ -11313,6 +11362,11 @@ cmd_set_vf_vlan_insert_parsed(
 		ret = rte_pmd_i40e_set_vf_vlan_insert(res->port_id, res->vf_id,
 			res->vlan_id);
 #endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_vlan_insert(res->port_id, res->vf_id,
+			res->vlan_id);
+#endif
 
 	switch (ret) {
 	case 0:
@@ -11402,6 +11456,10 @@ cmd_set_tx_loopback_parsed(
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_set_tx_loopback(res->port_id, is_on);
 #endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_tx_loopback(res->port_id, is_on);
+#endif
 
 	switch (ret) {
 	case 0:
@@ -11434,7 +11492,6 @@ cmdline_parse_inst_t cmd_set_tx_loopback = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* all queues drop enable configuration */
 
 /* Common result structure for all queues drop enable */
@@ -11480,13 +11537,20 @@ cmd_set_all_queues_drop_en_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_all_queues_drop_en_result *res = parsed_result;
-	int ret = 0;
+	int ret = -ENOTSUP;
 	int is_on = (strcmp(res->on_off, "on") == 0) ? 1 : 0;
 
 	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
 		return;
 
-	ret = rte_pmd_ixgbe_set_all_queues_drop_en(res->port_id, is_on);
+#ifdef RTE_LIBRTE_IXGBE_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_ixgbe_set_all_queues_drop_en(res->port_id, is_on);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_all_queues_drop_en(res->port_id, is_on);
+#endif
 	switch (ret) {
 	case 0:
 		break;
@@ -11519,6 +11583,7 @@ cmdline_parse_inst_t cmd_set_all_queues_drop_en = {
 	},
 };
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 /* vf split drop enable configuration */
 
 /* Common result structure for vf split drop enable */
@@ -11671,6 +11736,11 @@ cmd_set_vf_mac_addr_parsed(
 #ifdef RTE_LIBRTE_I40E_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_set_vf_mac_addr(res->port_id, res->vf_id,
+				&res->mac_addr);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_set_vf_mac_addr(res->port_id, res->vf_id,
 				&res->mac_addr);
 #endif
 
@@ -13042,9 +13112,16 @@ cmd_show_vf_stats_parsed(
 	memset(&stats, 0, sizeof(stats));
 
 #ifdef RTE_LIBRTE_I40E_PMD
-	ret = rte_pmd_i40e_get_vf_stats(res->port_id,
-					res->vf_id,
-					&stats);
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_i40e_get_vf_stats(res->port_id,
+						res->vf_id,
+						&stats);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_get_vf_stats(res->port_id,
+						res->vf_id,
+						&stats);
 #endif
 
 	switch (ret) {
@@ -13140,8 +13217,14 @@ cmd_clear_vf_stats_parsed(
 		return;
 
 #ifdef RTE_LIBRTE_I40E_PMD
-	ret = rte_pmd_i40e_reset_vf_stats(res->port_id,
-					  res->vf_id);
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_i40e_reset_vf_stats(res->port_id,
+						  res->vf_id);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_reset_vf_stats(res->port_id,
+						  res->vf_id);
 #endif
 
 	switch (ret) {
@@ -13597,12 +13680,10 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_allmulti_mode_all,
 	(cmdline_parse_inst_t *)&cmd_set_flush_rx,
 	(cmdline_parse_inst_t *)&cmd_set_link_check,
-#ifdef RTE_NIC_BYPASS
 	(cmdline_parse_inst_t *)&cmd_set_bypass_mode,
 	(cmdline_parse_inst_t *)&cmd_set_bypass_event,
 	(cmdline_parse_inst_t *)&cmd_set_bypass_timeout,
 	(cmdline_parse_inst_t *)&cmd_show_bypass_config,
-#endif
 #ifdef RTE_LIBRTE_PMD_BOND
 	(cmdline_parse_inst_t *) &cmd_set_bonding_mode,
 	(cmdline_parse_inst_t *) &cmd_show_bonding_config,
@@ -13731,10 +13812,10 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_macsec_offload_off,
 	(cmdline_parse_inst_t *)&cmd_set_macsec_sc,
 	(cmdline_parse_inst_t *)&cmd_set_macsec_sa,
-	(cmdline_parse_inst_t *)&cmd_set_vf_rxmode,
 	(cmdline_parse_inst_t *)&cmd_set_vf_traffic,
-	(cmdline_parse_inst_t *)&cmd_vf_rate_limit,
 #endif
+	(cmdline_parse_inst_t *)&cmd_set_vf_rxmode,
+	(cmdline_parse_inst_t *)&cmd_vf_rate_limit,
 	(cmdline_parse_inst_t *)&cmd_vf_rxvlan_filter,
 	(cmdline_parse_inst_t *)&cmd_set_vf_mac_addr,
 	(cmdline_parse_inst_t *)&cmd_set_vf_promisc,

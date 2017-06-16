@@ -2,6 +2,7 @@
  *   BSD LICENSE
  *
  *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
+ *   Copyright 2013-2014 6WIND S.A.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -15,36 +16,6 @@
  *       the documentation and/or other materials provided with the
  *       distribution.
  *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-/*   BSD LICENSE
- *
- *   Copyright 2013-2014 6WIND S.A.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of 6WIND S.A. nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -96,6 +67,9 @@
 #include <rte_errno.h>
 #ifdef RTE_LIBRTE_IXGBE_PMD
 #include <rte_pmd_ixgbe.h>
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+#include <rte_pmd_bnxt.h>
 #endif
 
 #include "testpmd.h"
@@ -968,6 +942,8 @@ static const struct {
 	MK_FLOW_ITEM(TCP, sizeof(struct rte_flow_item_tcp)),
 	MK_FLOW_ITEM(SCTP, sizeof(struct rte_flow_item_sctp)),
 	MK_FLOW_ITEM(VXLAN, sizeof(struct rte_flow_item_vxlan)),
+	MK_FLOW_ITEM(E_TAG, sizeof(struct rte_flow_item_e_tag)),
+	MK_FLOW_ITEM(NVGRE, sizeof(struct rte_flow_item_nvgre)),
 	MK_FLOW_ITEM(MPLS, sizeof(struct rte_flow_item_mpls)),
 	MK_FLOW_ITEM(GRE, sizeof(struct rte_flow_item_gre)),
 };
@@ -1433,6 +1409,22 @@ port_flow_list(portid_t port_id, uint32_t n, const uint32_t group[n])
 		}
 		printf("\n");
 	}
+}
+
+/** Restrict ingress traffic to the defined flow rules. */
+int
+port_flow_isolate(portid_t port_id, int set)
+{
+	struct rte_flow_error error;
+
+	/* Poisoning to make sure PMDs update it in case of error. */
+	memset(&error, 0x66, sizeof(error));
+	if (rte_flow_isolate(port_id, set, &error))
+		return port_flow_complain(&error);
+	printf("Ingress traffic on port %u is %s to the defined flow rules\n",
+	       port_id,
+	       set ? "now restricted" : "not restricted anymore");
+	return 0;
 }
 
 /*
@@ -3053,20 +3045,27 @@ set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate)
 	return diag;
 }
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 int
 set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate, uint64_t q_msk)
 {
-	int diag;
+	int diag = -ENOTSUP;
 
-	diag = rte_pmd_ixgbe_set_vf_rate_limit(port_id, vf, rate, q_msk);
+#ifdef RTE_LIBRTE_IXGBE_PMD
+	if (diag == -ENOTSUP)
+		diag = rte_pmd_ixgbe_set_vf_rate_limit(port_id, vf, rate,
+						       q_msk);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (diag == -ENOTSUP)
+		diag = rte_pmd_bnxt_set_vf_rate_limit(port_id, vf, rate, q_msk);
+#endif
 	if (diag == 0)
 		return diag;
-	printf("rte_pmd_ixgbe_set_vf_rate_limit for port_id=%d failed diag=%d\n",
+
+	printf("set_vf_rate_limit for port_id=%d failed diag=%d\n",
 		port_id, diag);
 	return diag;
 }
-#endif
 
 /*
  * Functions to manage the set of filtered Multicast MAC addresses.

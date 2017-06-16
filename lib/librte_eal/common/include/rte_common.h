@@ -102,6 +102,16 @@ typedef uint16_t unaligned_uint16_t;
  */
 #define RTE_SET_USED(x) (void)(x)
 
+/**
+ * Force a function to be inlined
+ */
+#define __rte_always_inline inline __attribute__((always_inline))
+
+/**
+ * Force a function to be noinlined
+ */
+#define __rte_noinline  __attribute__((noinline))
+
 /*********** Macros for pointer arithmetic ********/
 
 /**

@@ -405,7 +405,7 @@ enum I40E_VF_STATE {
 struct i40e_pf_vf {
 	struct i40e_pf *pf;
 	struct i40e_vsi *vsi;
-	enum I40E_VF_STATE state; /* The number of queue pairs availiable */
+	enum I40E_VF_STATE state; /* The number of queue pairs available */
 	uint16_t vf_idx; /* VF index in pf->vfs */
 	uint16_t lan_nb_qps; /* Actual queues allocated */
 	uint16_t reset_cnt; /* Total vf reset times */
@@ -431,6 +431,24 @@ struct i40e_vmdq_info {
 	struct i40e_vsi *vsi;
 };
 
+#define I40E_FDIR_MAX_FLEXLEN      16  /**< Max length of flexbytes. */
+#define I40E_MAX_FLX_SOURCE_OFF    480
+#define NONUSE_FLX_PIT_DEST_OFF 63
+#define NONUSE_FLX_PIT_FSIZE    1
+#define I40E_FLX_OFFSET_IN_FIELD_VECTOR   50
+#define MK_FLX_PIT(src_offset, fsize, dst_offset) ( \
+	(((src_offset) << I40E_PRTQF_FLX_PIT_SOURCE_OFF_SHIFT) & \
+		I40E_PRTQF_FLX_PIT_SOURCE_OFF_MASK) | \
+	(((fsize) << I40E_PRTQF_FLX_PIT_FSIZE_SHIFT) & \
+			I40E_PRTQF_FLX_PIT_FSIZE_MASK) | \
+	((((dst_offset) == NONUSE_FLX_PIT_DEST_OFF ? \
+			NONUSE_FLX_PIT_DEST_OFF : \
+			((dst_offset) + I40E_FLX_OFFSET_IN_FIELD_VECTOR)) << \
+			I40E_PRTQF_FLX_PIT_DEST_OFF_SHIFT) & \
+			I40E_PRTQF_FLX_PIT_DEST_OFF_MASK))
+#define I40E_WORD(hi, lo) (uint16_t)((((hi) << 8) & 0xFF00) | ((lo) & 0xFF))
+#define I40E_FLEX_WORD_MASK(off) (0x80 >> (off))
+
 /*
  * Structure to store flex pit for flow diretor.
  */
@@ -442,6 +460,7 @@ struct i40e_fdir_flex_pit {
 
 struct i40e_fdir_flex_mask {
 	uint8_t word_mask;  /**< Bit i enables word i of flexible payload */
+	uint8_t nb_bitmask;
 	struct {
 		uint8_t offset;
 		uint16_t mask;
@@ -479,6 +498,12 @@ struct i40e_fdir_info {
 	struct i40e_fdir_filter_list fdir_list;
 	struct i40e_fdir_filter **hash_map;
 	struct rte_hash *hash_table;
+
+	/* Mark if flex pit and mask is set */
+	bool flex_pit_flag[I40E_MAX_FLXPLD_LAYER];
+	bool flex_mask_flag[I40E_FILTER_PCTYPE_MAX];
+
+	bool inset_flag[I40E_FILTER_PCTYPE_MAX]; /* Mark if input set is set */
 };
 
 /* Ethertype filter number HW supports */
@@ -639,6 +664,11 @@ struct i40e_pf {
 
 	struct i40e_hw_port_stats stats_offset;
 	struct i40e_hw_port_stats stats;
+	/* internal packet byte count, it should be excluded from the total */
+	uint64_t internal_rx_bytes;
+	uint64_t internal_tx_bytes;
+	uint64_t internal_rx_bytes_offset;
+	uint64_t internal_tx_bytes_offset;
 	bool offset_loaded;
 
 	struct rte_eth_dev_data *dev_data; /* Pointer to the device data */
@@ -817,8 +847,7 @@ int i40e_vsi_delete_mac(struct i40e_vsi *vsi, struct ether_addr *addr);
 void i40e_update_vsi_stats(struct i40e_vsi *vsi);
 void i40e_pf_disable_irq0(struct i40e_hw *hw);
 void i40e_pf_enable_irq0(struct i40e_hw *hw);
-int i40e_dev_link_update(struct rte_eth_dev *dev,
-			 __rte_unused int wait_to_complete);
+int i40e_dev_link_update(struct rte_eth_dev *dev, int wait_to_complete);
 void i40e_vsi_queues_bind_intr(struct i40e_vsi *vsi);
 void i40e_vsi_queues_unbind_intr(struct i40e_vsi *vsi);
 int i40e_vsi_vlan_pvid_set(struct i40e_vsi *vsi,
@@ -892,9 +921,12 @@ int i40e_add_macvlan_filters(struct i40e_vsi *vsi,
 			     struct i40e_macvlan_filter *filter,
 			     int total);
 bool is_i40e_supported(struct rte_eth_dev *dev);
-
-#define I40E_DEV_TO_PCI(eth_dev) \
-	RTE_DEV_TO_PCI((eth_dev)->device)
+int i40e_validate_input_set(enum i40e_filter_pctype pctype,
+			    enum rte_filter_type filter, uint64_t inset);
+int i40e_generate_inset_mask_reg(uint64_t inset, uint32_t *mask,
+				 uint8_t nb_elem);
+uint64_t i40e_translate_input_set_reg(enum i40e_mac_type type, uint64_t input);
+void i40e_check_write_reg(struct i40e_hw *hw, uint32_t addr, uint32_t val);
 
 /* I40E_DEV_PRIVATE_TO */
 #define I40E_DEV_PRIVATE_TO_PF(adapter) \

@@ -143,6 +143,19 @@
 #define EM_TX_MAX_SEG      UINT8_MAX
 #define EM_TX_MAX_MTU_SEG  UINT8_MAX
 
+#define MAC_TYPE_FILTER_SUP(type)    do {\
+	if ((type) != e1000_82580 && (type) != e1000_i350 &&\
+		(type) != e1000_82576 && (type) != e1000_i210 &&\
+		(type) != e1000_i211)\
+		return -ENOTSUP;\
+} while (0)
+
+#define MAC_TYPE_FILTER_SUP_EXT(type)    do {\
+	if ((type) != e1000_82580 && (type) != e1000_i350 &&\
+		(type) != e1000_i210 && (type) != e1000_i211)\
+		return -ENOTSUP; \
+} while (0)
+
 /* structure for interrupt relative data */
 struct e1000_interrupt {
 	uint32_t flags;
@@ -237,13 +250,19 @@ struct e1000_2tuple_filter {
 	uint16_t queue;       /* rx queue assigned to */
 };
 
+/* ethertype filter structure */
+struct igb_ethertype_filter {
+	uint16_t ethertype;
+	uint32_t etqf;
+};
+
 /*
- * Structure to store filters' info.
+ * Structure to store filters'info.
  */
 struct e1000_filter_info {
 	uint8_t ethertype_mask; /* Bit mask for every used ethertype filter */
 	/* store used ethertype filters*/
-	uint16_t ethertype_filters[E1000_MAX_ETQF_FILTERS];
+	struct igb_ethertype_filter ethertype_filters[E1000_MAX_ETQF_FILTERS];
 	uint8_t flex_mask;	/* Bit mask for every used flex filter */
 	struct e1000_flex_filter_list flex_list;
 	/* Bit mask for every used 5tuple filter */
@@ -252,6 +271,8 @@ struct e1000_filter_info {
 	/* Bit mask for every used 2tuple filter */
 	uint8_t twotuple_mask;
 	struct e1000_2tuple_filter_list twotuple_list;
+	/* store the SYN filter info */
+	uint32_t syn_info;
 };
 
 /*
@@ -291,8 +312,55 @@ struct e1000_adapter {
 #define E1000_DEV_PRIVATE_TO_FILTER_INFO(adapter) \
 	(&((struct e1000_adapter *)adapter)->filter)
 
-#define E1000_DEV_TO_PCI(eth_dev) \
-	RTE_DEV_TO_PCI((eth_dev)->device)
+struct rte_flow {
+	enum rte_filter_type filter_type;
+	void *rule;
+};
+
+/* ntuple filter list structure */
+struct igb_ntuple_filter_ele {
+	TAILQ_ENTRY(igb_ntuple_filter_ele) entries;
+	struct rte_eth_ntuple_filter filter_info;
+};
+
+/* ethertype filter list structure */
+struct igb_ethertype_filter_ele {
+	TAILQ_ENTRY(igb_ethertype_filter_ele) entries;
+	struct rte_eth_ethertype_filter filter_info;
+};
+
+/* syn filter list structure */
+struct igb_eth_syn_filter_ele {
+	TAILQ_ENTRY(igb_eth_syn_filter_ele) entries;
+	struct rte_eth_syn_filter filter_info;
+};
+
+/* flex filter list structure */
+struct igb_flex_filter_ele {
+	TAILQ_ENTRY(igb_flex_filter_ele) entries;
+	struct rte_eth_flex_filter filter_info;
+};
+
+/* igb_flow memory list structure */
+struct igb_flow_mem {
+	TAILQ_ENTRY(igb_flow_mem) entries;
+	struct rte_flow *flow;
+	struct rte_eth_dev *dev;
+};
+
+TAILQ_HEAD(igb_ntuple_filter_list, igb_ntuple_filter_ele);
+struct igb_ntuple_filter_list igb_filter_ntuple_list;
+TAILQ_HEAD(igb_ethertype_filter_list, igb_ethertype_filter_ele);
+struct igb_ethertype_filter_list igb_filter_ethertype_list;
+TAILQ_HEAD(igb_syn_filter_list, igb_eth_syn_filter_ele);
+struct igb_syn_filter_list igb_filter_syn_list;
+TAILQ_HEAD(igb_flex_filter_list, igb_flex_filter_ele);
+struct igb_flex_filter_list igb_filter_flex_list;
+TAILQ_HEAD(igb_flow_mem_list, igb_flow_mem);
+struct igb_flow_mem_list igb_flow_list;
+
+extern const struct rte_flow_ops igb_flow_ops;
+
 /*
  * RX/TX IGB function prototypes
  */
@@ -411,4 +479,24 @@ void em_txq_info_get(struct rte_eth_dev *dev, uint16_t queue_id,
 
 void igb_pf_host_uninit(struct rte_eth_dev *dev);
 
+void igb_filterlist_flush(struct rte_eth_dev *dev);
+int igb_delete_5tuple_filter_82576(struct rte_eth_dev *dev,
+		struct e1000_5tuple_filter *filter);
+int igb_delete_2tuple_filter(struct rte_eth_dev *dev,
+		struct e1000_2tuple_filter *filter);
+void igb_remove_flex_filter(struct rte_eth_dev *dev,
+			struct e1000_flex_filter *filter);
+int igb_ethertype_filter_remove(struct e1000_filter_info *filter_info,
+	uint8_t idx);
+int igb_add_del_ntuple_filter(struct rte_eth_dev *dev,
+		struct rte_eth_ntuple_filter *ntuple_filter, bool add);
+int igb_add_del_ethertype_filter(struct rte_eth_dev *dev,
+			struct rte_eth_ethertype_filter *filter,
+			bool add);
+int eth_igb_syn_filter_set(struct rte_eth_dev *dev,
+			struct rte_eth_syn_filter *filter,
+			bool add);
+int eth_igb_add_del_flex_filter(struct rte_eth_dev *dev,
+			struct rte_eth_flex_filter *filter,
+			bool add);
 #endif /* _E1000_ETHDEV_H_ */

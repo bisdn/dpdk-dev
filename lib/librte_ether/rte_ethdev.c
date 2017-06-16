@@ -339,7 +339,6 @@ rte_eth_dev_get_port_by_name(const char *name, uint8_t *port_id)
 	if (!nb_ports)
 		return -ENODEV;
 
-	*port_id = RTE_MAX_ETHPORTS;
 	RTE_ETH_FOREACH_DEV(i) {
 		if (!strncmp(name,
 			rte_eth_dev_data[i].name, strlen(name))) {
@@ -753,13 +752,13 @@ rte_eth_dev_configure(uint8_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	if ((dev_conf->intr_conf.lsc == 1) &&
 		(!(dev->data->dev_flags & RTE_ETH_DEV_INTR_LSC))) {
 			RTE_PMD_DEBUG_TRACE("driver %s does not support lsc\n",
-					dev->data->drv_name);
+					dev->device->driver->name);
 			return -EINVAL;
 	}
 	if ((dev_conf->intr_conf.rmv == 1) &&
 	    (!(dev->data->dev_flags & RTE_ETH_DEV_INTR_RMV))) {
 		RTE_PMD_DEBUG_TRACE("driver %s does not support rmv\n",
-				    dev->data->drv_name);
+				    dev->device->driver->name);
 		return -EINVAL;
 	}
 
@@ -1900,7 +1899,7 @@ rte_eth_dev_info_get(uint8_t port_id, struct rte_eth_dev_info *dev_info)
 
 	RTE_FUNC_PTR_OR_RET(*dev->dev_ops->dev_infos_get);
 	(*dev->dev_ops->dev_infos_get)(dev, dev_info);
-	dev_info->driver_name = dev->data->drv_name;
+	dev_info->driver_name = dev->device->driver->name;
 	dev_info->nb_rx_queues = dev->data->nb_rx_queues;
 	dev_info->nb_tx_queues = dev->data->nb_tx_queues;
 }
@@ -2789,7 +2788,7 @@ rte_eth_dma_zone_reserve(const struct rte_eth_dev *dev, const char *ring_name,
 	const struct rte_memzone *mz;
 
 	snprintf(z_name, sizeof(z_name), "%s_%s_%d_%d",
-		 dev->data->drv_name, ring_name,
+		 dev->device->driver->name, ring_name,
 		 dev->data->port_id, queue_id);
 
 	mz = rte_memzone_lookup(z_name);
@@ -2872,128 +2871,6 @@ rte_eth_dev_rx_intr_disable(uint8_t port_id,
 	return (*dev->dev_ops->rx_queue_intr_disable)(dev, queue_id);
 }
 
-#ifdef RTE_NIC_BYPASS
-int rte_eth_dev_bypass_init(uint8_t port_id)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_init, -ENOTSUP);
-	(*dev->dev_ops->bypass_init)(dev);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_state_show(uint8_t port_id, uint32_t *state)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_state_show, -ENOTSUP);
-	(*dev->dev_ops->bypass_state_show)(dev, state);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_state_set(uint8_t port_id, uint32_t *new_state)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_state_set, -ENOTSUP);
-	(*dev->dev_ops->bypass_state_set)(dev, new_state);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_event_show(uint8_t port_id, uint32_t event, uint32_t *state)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_state_show, -ENOTSUP);
-	(*dev->dev_ops->bypass_event_show)(dev, event, state);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_event_store(uint8_t port_id, uint32_t event, uint32_t state)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_event_set, -ENOTSUP);
-	(*dev->dev_ops->bypass_event_set)(dev, event, state);
-	return 0;
-}
-
-int
-rte_eth_dev_wd_timeout_store(uint8_t port_id, uint32_t timeout)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_wd_timeout_set, -ENOTSUP);
-	(*dev->dev_ops->bypass_wd_timeout_set)(dev, timeout);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_ver_show(uint8_t port_id, uint32_t *ver)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_ver_show, -ENOTSUP);
-	(*dev->dev_ops->bypass_ver_show)(dev, ver);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_wd_timeout_show(uint8_t port_id, uint32_t *wd_timeout)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_wd_timeout_show, -ENOTSUP);
-	(*dev->dev_ops->bypass_wd_timeout_show)(dev, wd_timeout);
-	return 0;
-}
-
-int
-rte_eth_dev_bypass_wd_reset(uint8_t port_id)
-{
-	struct rte_eth_dev *dev;
-
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-
-	dev = &rte_eth_devices[port_id];
-
-	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->bypass_wd_reset, -ENOTSUP);
-	(*dev->dev_ops->bypass_wd_reset)(dev);
-	return 0;
-}
-#endif
 
 int
 rte_eth_dev_filter_supported(uint8_t port_id, enum rte_filter_type filter_type)

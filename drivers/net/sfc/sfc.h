@@ -46,9 +46,6 @@
 extern "C" {
 #endif
 
-#define SFC_DEV_TO_PCI(eth_dev) \
-	RTE_DEV_TO_PCI((eth_dev)->device)
-
 #if EFSYS_OPT_RX_SCALE
 /** RSS key length (bytes) */
 #define SFC_RSS_KEY_SIZE	40
@@ -182,6 +179,8 @@ struct sfc_adapter {
 	 */
 	rte_spinlock_t			lock;
 	enum sfc_adapter_state		state;
+	struct rte_pci_addr		pci_addr;
+	uint16_t			port_id;
 	struct rte_eth_dev		*eth_dev;
 	struct rte_kvargs		*kvargs;
 	bool				debug_init;
@@ -226,7 +225,18 @@ struct sfc_adapter {
 	uint8_t				rss_key[SFC_RSS_KEY_SIZE];
 #endif
 
+	/*
+	 * Shared memory copy of the Rx datapath name to be used by
+	 * the secondary process to find Rx datapath to be used.
+	 */
+	char				*dp_rx_name;
 	const struct sfc_dp_rx		*dp_rx;
+
+	/*
+	 * Shared memory copy of the Tx datapath name to be used by
+	 * the secondary process to find Rx datapath to be used.
+	 */
+	char				*dp_tx_name;
 	const struct sfc_dp_tx		*dp_tx;
 };
 

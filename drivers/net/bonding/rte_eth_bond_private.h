@@ -184,7 +184,7 @@ extern const struct eth_dev_ops default_dev_ops;
 int
 check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev);
 
-/* Search given slave array to find possition of given id.
+/* Search given slave array to find position of given id.
  * Return slave pos or slaves_count if not found. */
 static inline uint8_t
 find_slave_by_id(uint8_t *slaves, uint8_t slaves_count, uint8_t slave_id) {
@@ -268,31 +268,31 @@ bond_ethdev_lsc_event_callback(uint8_t port_id, enum rte_eth_event_type type,
 		void *param);
 
 int
-bond_ethdev_parse_slave_port_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_slave_port_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 int
-bond_ethdev_parse_slave_mode_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_slave_mode_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 int
-bond_ethdev_parse_socket_id_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_socket_id_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 int
-bond_ethdev_parse_primary_slave_port_id_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_primary_slave_port_id_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 int
-bond_ethdev_parse_balance_xmit_policy_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_balance_xmit_policy_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 int
-bond_ethdev_parse_bond_mac_addr_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_bond_mac_addr_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 int
-bond_ethdev_parse_time_ms_kvarg(const char *key __rte_unused,
+bond_ethdev_parse_time_ms_kvarg(const char *key,
 		const char *value, void *extra_args);
 
 void

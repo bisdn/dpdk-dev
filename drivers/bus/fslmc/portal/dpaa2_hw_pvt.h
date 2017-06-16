@@ -46,6 +46,10 @@
 #define lower_32_bits(x) ((uint32_t)(x))
 #define upper_32_bits(x) ((uint32_t)(((x) >> 16) >> 16))
 
+#define SVR_LS1080A             0x87030000
+#define SVR_LS2080A             0x87010000
+#define SVR_LS2088A             0x87090000
+
 #ifndef ETH_VLAN_HLEN
 #define ETH_VLAN_HLEN   4 /** < Vlan Header Length */
 #endif
@@ -65,7 +69,7 @@
 
 #define MAX_BPID 256
 #define DPAA2_MBUF_HW_ANNOTATION	64
-#define DPAA2_FD_PTA_SIZE		64
+#define DPAA2_FD_PTA_SIZE		0
 
 #if (DPAA2_MBUF_HW_ANNOTATION + DPAA2_FD_PTA_SIZE) > RTE_PKTMBUF_HEADROOM
 #error "Annotation requirement is more than RTE_PKTMBUF_HEADROOM"
@@ -108,6 +112,9 @@ struct dpaa2_dpbp_dev {
 
 struct queue_storage_info_t {
 	struct qbman_result *dq_storage[NUM_DQS_PER_QUEUE];
+	struct qbman_result *active_dqs;
+	int active_dpio_id;
+	int toggle;
 };
 
 struct dpaa2_queue {
@@ -120,8 +127,20 @@ struct dpaa2_queue {
 	uint64_t rx_pkts;
 	uint64_t tx_pkts;
 	uint64_t err_pkts;
-	struct queue_storage_info_t *q_storage;
+	union {
+		struct queue_storage_info_t *q_storage;
+		struct qbman_result *cscn;
+	};
 };
+
+struct swp_active_dqs {
+	struct qbman_result *global_active_dqs;
+	uint64_t reserved[7];
+};
+
+#define NUM_MAX_SWP 64
+
+extern struct swp_active_dqs rte_global_active_dqs_list[NUM_MAX_SWP];
 
 /*! Global MCP list */
 extern void *(*rte_mcp_ptr_list);
@@ -231,7 +250,7 @@ static phys_addr_t dpaa2_mem_vtop(uint64_t vaddr)
 /**
  * When we are using Physical addresses as IO Virtual Addresses,
  * Need to call conversion routines dpaa2_mem_vtop & dpaa2_mem_ptov
- * whereever required.
+ * wherever required.
  * These routines are called with help of below MACRO's
  */
 
@@ -264,6 +283,31 @@ static phys_addr_t dpaa2_mem_vtop(uint64_t vaddr)
 
 #endif /* RTE_LIBRTE_DPAA2_USE_PHYS_IOVA */
 
+static inline
+int check_swp_active_dqs(uint16_t dpio_index)
+{
+	if (rte_global_active_dqs_list[dpio_index].global_active_dqs != NULL)
+		return 1;
+	return 0;
+}
+
+static inline
+void clear_swp_active_dqs(uint16_t dpio_index)
+{
+	rte_global_active_dqs_list[dpio_index].global_active_dqs = NULL;
+}
+
+static inline
+struct qbman_result *get_swp_active_dqs(uint16_t dpio_index)
+{
+	return rte_global_active_dqs_list[dpio_index].global_active_dqs;
+}
+
+static inline
+void set_swp_active_dqs(uint16_t dpio_index, struct qbman_result *dqs)
+{
+	rte_global_active_dqs_list[dpio_index].global_active_dqs = dqs;
+}
 struct dpaa2_dpbp_dev *dpaa2_alloc_dpbp_dev(void);
 void dpaa2_free_dpbp_dev(struct dpaa2_dpbp_dev *dpbp);
 

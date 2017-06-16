@@ -41,6 +41,40 @@ New Features
      Also, make sure to start the actual text at the margin.
      =========================================================
 
+* **Added Generic Flow API support to enic.**
+
+  Flow API support for outer Ethernet, VLAN, IPv4, IPv6, UDP, TCP, SCTP, VxLAN
+  and inner Ethernet, VLAN, IPv4, IPv6, UDP and TCP pattern items with QUEUE,
+  MARK, FLAG and VOID actions for ingress traffic.
+
+* **Added support for Chelsio T6 family of adapters**
+
+  CXGBE PMD updated to run Chelsio T6 family of adapters.
+
+* **Added latency and performance improvements for cxgbe**
+
+  TX and RX path reworked to improve performance.  Also reduced latency
+  for slow traffic.
+
+* **Updated bnxt PMD.**
+
+  Major enhancements include:
+  * Support MTU modification.
+  * Support LRO.
+  * Support VLAN filter and strip functionality.
+  * Other enhancements to add support for more dev_ops.
+  * Add PMD specific APIs mainly to control VF from PF.
+  * Update HWRM version to 1.7.7
+
+* **Added support for Rx interrupts on mlx4 driver.**
+
+  Rx queues can be armed with an interrupt which will trigger on the
+  next packet arrival.
+
+* **Updated szedata2 PMD.**
+
+  Added support for firmwares with multiple Ethernet ports per physical port.
+
 
 Resolved Issues
 ---------------

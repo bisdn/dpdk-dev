@@ -47,8 +47,30 @@
 /*default tc to be used for ,congestion, distribution etc configuration. */
 #define DPAA2_DEF_TC		0
 
+/* Threshold for a queue to *Enter* Congestion state.
+ * It is set to 32KB
+ */
+#define CONG_ENTER_TX_THRESHOLD   (32 * 1024)
+
+/* Threshold for a queue to *Exit* Congestion state.
+ */
+#define CONG_EXIT_TX_THRESHOLD    (24 * 1024)
+
+/* RX queue tail drop threshold
+ * currently considering 32 KB packets
+ */
+#define CONG_THRESHOLD_RX_Q  (32 * 1024)
+
 /* Size of the input SMMU mapped memory required by MC */
 #define DIST_PARAM_IOVA_SIZE 256
+
+/* Enable TX Congestion control support
+ * default is disable
+ */
+#define DPAA2_TX_CGR_SUPPORT	0x01
+
+/* Disable RX tail drop, default is enable */
+#define DPAA2_RX_TAILDROP_OFF	0x04
 
 struct dpaa2_dev_priv {
 	void *hw;
@@ -77,7 +99,8 @@ int dpaa2_remove_flow_dist(struct rte_eth_dev *eth_dev,
 
 int dpaa2_attach_bp_list(struct dpaa2_dev_priv *priv, void *blist);
 
-uint16_t dpaa2_dev_rx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts);
+uint16_t dpaa2_dev_prefetch_rx(void *queue, struct rte_mbuf **bufs,
+			       uint16_t nb_pkts);
 uint16_t dpaa2_dev_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts);
-
+uint16_t dummy_dev_tx(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts);
 #endif /* _DPAA2_ETHDEV_H */

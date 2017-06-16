@@ -139,15 +139,10 @@ CONFIG_RTE_ETHDEV_RXTX_CALLBACKS=y
 #
 # Turn off Tx preparation stage
 #
-# Warning: rte_ethdev_tx_prepare() can be safely disabled only if using a
+# Warning: rte_eth_tx_prepare() can be safely disabled only if using a
 # driver which do not implement any Tx preparation.
 #
 CONFIG_RTE_ETHDEV_TX_PREPARE_NOOP=n
-
-#
-# Support NIC bypass logic
-#
-CONFIG_RTE_NIC_BYPASS=n
 
 #
 # Compile burst-oriented Amazon ENA PMD driver
@@ -182,6 +177,7 @@ CONFIG_RTE_LIBRTE_IXGBE_DEBUG_TX_FREE=n
 CONFIG_RTE_LIBRTE_IXGBE_DEBUG_DRIVER=n
 CONFIG_RTE_LIBRTE_IXGBE_PF_DISABLE_STRIP_CRC=n
 CONFIG_RTE_IXGBE_INC_VECTOR=y
+CONFIG_RTE_LIBRTE_IXGBE_BYPASS=n
 
 #
 # Compile burst-oriented I40E PMD driver
@@ -240,7 +236,7 @@ CONFIG_RTE_LIBRTE_BNX2X_MF_SUPPORT=n
 CONFIG_RTE_LIBRTE_BNX2X_DEBUG_PERIODIC=n
 
 #
-# Compile burst-oriented Chelsio Terminator 10GbE/40GbE (CXGBE) PMD
+# Compile burst-oriented Chelsio Terminator (CXGBE) PMD
 #
 CONFIG_RTE_LIBRTE_CXGBE_PMD=y
 CONFIG_RTE_LIBRTE_CXGBE_DEBUG=n
@@ -248,12 +244,14 @@ CONFIG_RTE_LIBRTE_CXGBE_DEBUG_REG=n
 CONFIG_RTE_LIBRTE_CXGBE_DEBUG_MBOX=n
 CONFIG_RTE_LIBRTE_CXGBE_DEBUG_TX=n
 CONFIG_RTE_LIBRTE_CXGBE_DEBUG_RX=n
+CONFIG_RTE_LIBRTE_CXGBE_TPUT=y
 
 #
 # Compile burst-oriented Cisco ENIC PMD driver
 #
 CONFIG_RTE_LIBRTE_ENIC_PMD=y
 CONFIG_RTE_LIBRTE_ENIC_DEBUG=n
+CONFIG_RTE_LIBRTE_ENIC_DEBUG_FLOW=n
 
 #
 # Compile burst-oriented Netronome NFP PMD driver
@@ -278,12 +276,8 @@ CONFIG_RTE_LIBRTE_SFC_EFX_DEBUG=n
 CONFIG_RTE_LIBRTE_PMD_SZEDATA2=n
 #
 # Defines firmware type address space.
-# RTE_LIBRTE_PMD_SZEDATA2_AS can be:
-# 0 - for firmwares:
-#         NIC_100G1_LR4
-#         HANIC_100G1_LR4
-#         HANIC_100G1_SR10
-# Other values raise compile time error
+# See documentation for supported values.
+# Other values raise compile time error.
 CONFIG_RTE_LIBRTE_PMD_SZEDATA2_AS=0
 
 #

@@ -126,7 +126,7 @@ uint16_t ixgbe_xmit_fixed_burst_vec(void *tx_queue, struct rte_mbuf **tx_pkts,
  * Check for descriptors with their DD bit set and free mbufs.
  * Return the total number of buffers freed.
  */
-static inline int __attribute__((always_inline))
+static __rte_always_inline int
 ixgbe_tx_free_bufs(struct ixgbe_tx_queue *txq)
 {
 	struct ixgbe_tx_entry *txep;
@@ -4111,10 +4111,7 @@ ixgbe_alloc_rx_queue_mbufs(struct ixgbe_rx_queue *rxq)
 			return -ENOMEM;
 		}
 
-		rte_mbuf_refcnt_set(mbuf, 1);
-		mbuf->next = NULL;
 		mbuf->data_off = RTE_PKTMBUF_HEADROOM;
-		mbuf->nb_segs = 1;
 		mbuf->port = rxq->port_id;
 
 		dma_addr =
