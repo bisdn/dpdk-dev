@@ -35,6 +35,7 @@
 #include <rte_mbuf.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
+#include <rte_pause.h>
 
 #include <rte_crypto.h>
 #include <rte_cryptodev.h>
@@ -46,14 +47,14 @@
 #include "test_cryptodev_aes_test_vectors.h"
 #include "test_cryptodev_des_test_vectors.h"
 #include "test_cryptodev_hash_test_vectors.h"
-#include "test_cryptodev.h"
 
 static int
 test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	struct rte_mempool *mbuf_pool,
 	struct rte_mempool *op_mpool,
+	struct rte_mempool *sess_mpool,
 	uint8_t dev_id,
-	enum rte_cryptodev_type cryptodev_type,
+	int driver_id,
 	char *test_msg)
 {
 	struct rte_mbuf *ibuf = NULL;
@@ -64,8 +65,8 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	struct rte_crypto_sym_xform *init_xform = NULL;
 	struct rte_crypto_sym_op *sym_op = NULL;
 	struct rte_crypto_op *op = NULL;
-	struct rte_cryptodev_sym_session *sess = NULL;
 	struct rte_cryptodev_info dev_info;
+	struct rte_cryptodev_sym_session *sess = NULL;
 
 	int status = TEST_SUCCESS;
 	const struct blockcipher_test_data *tdata = t->test_data;
@@ -78,6 +79,23 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	uint8_t dst_pattern = 0xb6;
 	uint8_t tmp_src_buf[MBUF_SIZE];
 	uint8_t tmp_dst_buf[MBUF_SIZE];
+
+	int openssl_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_OPENSSL_PMD));
+	int scheduler_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_SCHEDULER_PMD));
+	int armv8_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_ARMV8_PMD));
+	int aesni_mb_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD));
+	int qat_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_QAT_SYM_PMD));
+	int dpaa2_sec_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_DPAA2_SEC_PMD));
+	int dpaa_sec_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_DPAA_SEC_PMD));
+	int mrvl_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_MRVL_PMD));
 
 	int nb_segs = 1;
 
@@ -99,17 +117,17 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 		memcpy(auth_key, tdata->auth_key.data,
 			tdata->auth_key.len);
 
-	switch (cryptodev_type) {
-	case RTE_CRYPTODEV_QAT_SYM_PMD:
-	case RTE_CRYPTODEV_OPENSSL_PMD:
-	case RTE_CRYPTODEV_ARMV8_PMD: /* Fall through */
+	if (driver_id == dpaa2_sec_pmd ||
+			driver_id == dpaa_sec_pmd ||
+			driver_id == qat_pmd ||
+			driver_id == openssl_pmd ||
+			driver_id == armv8_pmd ||
+			driver_id == mrvl_pmd) { /* Fall through */
 		digest_len = tdata->digest.len;
-		break;
-	case RTE_CRYPTODEV_AESNI_MB_PMD:
-	case RTE_CRYPTODEV_SCHEDULER_PMD:
+	} else if (driver_id == aesni_mb_pmd ||
+			driver_id == scheduler_pmd) {
 		digest_len = tdata->digest.truncated_len;
-		break;
-	default:
+	} else {
 		snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
 			"line %u FAILED: %s",
 			__LINE__, "Unsupported PMD type");
@@ -118,8 +136,6 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	}
 
 	/* preparing data */
-	if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER)
-		buf_len += tdata->iv.len;
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH)
 		buf_len += digest_len;
 
@@ -145,10 +161,6 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 		pktmbuf_write(ibuf, 0, tdata->ciphertext.len,
 				tdata->ciphertext.data);
 
-	if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
-		rte_memcpy(rte_pktmbuf_prepend(ibuf, tdata->iv.len),
-				tdata->iv.data, tdata->iv.len);
-	}
 	buf_p = rte_pktmbuf_append(ibuf, digest_len);
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_VERIFY)
 		rte_memcpy(buf_p, tdata->digest.data, digest_len);
@@ -293,24 +305,18 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 				RTE_CRYPTO_CIPHER_OP_DECRYPT;
 		cipher_xform->cipher.key.data = cipher_key;
 		cipher_xform->cipher.key.length = tdata->cipher_key.len;
+		cipher_xform->cipher.iv.offset = IV_OFFSET;
+		cipher_xform->cipher.iv.length = tdata->iv.len;
 
-		sym_op->cipher.data.offset = tdata->iv.len;
+		sym_op->cipher.data.offset = 0;
 		sym_op->cipher.data.length = tdata->ciphertext.len;
-		sym_op->cipher.iv.data = rte_pktmbuf_mtod(sym_op->m_src,
-			uint8_t *);
-		sym_op->cipher.iv.length = tdata->iv.len;
-		sym_op->cipher.iv.phys_addr = rte_pktmbuf_mtophys(
-			sym_op->m_src);
+		rte_memcpy(rte_crypto_op_ctod_offset(op, uint8_t *, IV_OFFSET),
+				tdata->iv.data,
+				tdata->iv.len);
 	}
 
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH) {
-		uint32_t auth_data_offset = 0;
 		uint32_t digest_offset = tdata->ciphertext.len;
-
-		if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
-			digest_offset += tdata->iv.len;
-			auth_data_offset += tdata->iv.len;
-		}
 
 		auth_xform->type = RTE_CRYPTO_SYM_XFORM_AUTH;
 		auth_xform->auth.algo = tdata->auth_algo;
@@ -323,26 +329,27 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 			sym_op->auth.digest.data = pktmbuf_mtod_offset
 				(iobuf, digest_offset);
 			sym_op->auth.digest.phys_addr =
-				pktmbuf_mtophys_offset(iobuf,
+				pktmbuf_iova_offset(iobuf,
 					digest_offset);
 		} else {
 			auth_xform->auth.op = RTE_CRYPTO_AUTH_OP_VERIFY;
 			sym_op->auth.digest.data = pktmbuf_mtod_offset
 				(sym_op->m_src, digest_offset);
 			sym_op->auth.digest.phys_addr =
-				pktmbuf_mtophys_offset(sym_op->m_src,
+				pktmbuf_iova_offset(sym_op->m_src,
 					digest_offset);
 		}
 
-		sym_op->auth.data.offset = auth_data_offset;
+		sym_op->auth.data.offset = 0;
 		sym_op->auth.data.length = tdata->ciphertext.len;
-		sym_op->auth.digest.length = digest_len;
 	}
 
 	/* create session for sessioned op */
 	if (!(t->feature_mask & BLOCKCIPHER_TEST_FEATURE_SESSIONLESS)) {
-		sess = rte_cryptodev_sym_session_create(dev_id,
-			init_xform);
+		sess = rte_cryptodev_sym_session_create(sess_mpool);
+
+		rte_cryptodev_sym_session_init(dev_id, sess, init_xform,
+				sess_mpool);
 		if (!sess) {
 			snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN, "line %u "
 				"FAILED: %s", __LINE__,
@@ -421,7 +428,7 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 			compare_len = tdata->plaintext.len;
 		}
 
-		if (memcmp(rte_pktmbuf_read(iobuf, tdata->iv.len, compare_len,
+		if (memcmp(rte_pktmbuf_read(iobuf, 0, compare_len,
 				buffer), compare_ref, compare_len)) {
 			snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN, "line %u "
 				"FAILED: %s", __LINE__,
@@ -432,13 +439,7 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	}
 
 	if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_GEN) {
-		uint8_t *auth_res;
-
-		if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER)
-			auth_res = pktmbuf_mtod_offset(iobuf,
-					tdata->iv.len + tdata->ciphertext.len);
-		else
-			auth_res = pktmbuf_mtod_offset(iobuf,
+		uint8_t *auth_res = pktmbuf_mtod_offset(iobuf,
 					tdata->ciphertext.len);
 
 		if (memcmp(auth_res, tdata->digest.data, digest_len)) {
@@ -457,25 +458,13 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 	if (t->feature_mask & BLOCKCIPHER_TEST_FEATURE_OOP) {
 		struct rte_mbuf *mbuf;
 		uint8_t value;
-		uint32_t head_unchanged_len = 0, changed_len = 0;
+		uint32_t head_unchanged_len, changed_len = 0;
 		uint32_t i;
 
 		mbuf = sym_op->m_src;
-		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_VERIFY) {
-			/* white-box test: PMDs use some of the
-			 * tailroom as temp storage in verify case
-			 */
-			head_unchanged_len = rte_pktmbuf_headroom(mbuf)
-					+ rte_pktmbuf_data_len(mbuf);
-			changed_len = digest_len;
-		} else {
-			head_unchanged_len = mbuf->buf_len;
-			changed_len = 0;
-		}
+		head_unchanged_len = mbuf->buf_len;
 
 		for (i = 0; i < mbuf->buf_len; i++) {
-			if (i == head_unchanged_len)
-				i += changed_len;
 			value = *((uint8_t *)(mbuf->buf_addr)+i);
 			if (value != tmp_src_buf[i]) {
 				snprintf(test_msg, BLOCKCIPHER_TEST_MSG_LEN,
@@ -492,7 +481,7 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 						sym_op->auth.data.offset;
 			changed_len = sym_op->auth.data.length;
 			if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_GEN)
-				changed_len += sym_op->auth.digest.length;
+				changed_len += digest_len;
 		} else {
 			/* cipher-only */
 			head_unchanged_len = rte_pktmbuf_headroom(mbuf) +
@@ -534,20 +523,7 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 		}
 
 		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_GEN)
-			changed_len += sym_op->auth.digest.length;
-
-		if (t->op_mask & BLOCKCIPHER_TEST_OP_AUTH_VERIFY) {
-			/* white-box test: PMDs use some of the
-			 * tailroom as temp storage in verify case
-			 */
-			if (t->op_mask & BLOCKCIPHER_TEST_OP_CIPHER) {
-				/* This is simplified, not checking digest*/
-				changed_len += digest_len*2;
-			} else {
-				head_unchanged_len += digest_len;
-				changed_len += digest_len;
-			}
-		}
+			changed_len += digest_len;
 
 		for (i = 0; i < mbuf->buf_len; i++) {
 			if (i == head_unchanged_len)
@@ -568,8 +544,10 @@ test_blockcipher_one_case(const struct blockcipher_test_case *t,
 
 error_exit:
 	if (!(t->feature_mask & BLOCKCIPHER_TEST_FEATURE_SESSIONLESS)) {
-		if (sess)
-			rte_cryptodev_sym_session_free(dev_id, sess);
+		if (sess) {
+			rte_cryptodev_sym_session_clear(dev_id, sess);
+			rte_cryptodev_sym_session_free(sess);
+		}
 		if (cipher_xform)
 			rte_free(cipher_xform);
 		if (auth_xform)
@@ -591,8 +569,9 @@ error_exit:
 int
 test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 	struct rte_mempool *op_mpool,
+	struct rte_mempool *sess_mpool,
 	uint8_t dev_id,
-	enum rte_cryptodev_type cryptodev_type,
+	int driver_id,
 	enum blockcipher_test_type test_type)
 {
 	int status, overall_status = TEST_SUCCESS;
@@ -601,6 +580,23 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 	uint32_t n_test_cases = 0;
 	uint32_t target_pmd_mask = 0;
 	const struct blockcipher_test_case *tcs = NULL;
+
+	int openssl_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_OPENSSL_PMD));
+	int dpaa2_sec_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_DPAA2_SEC_PMD));
+	int dpaa_sec_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_DPAA_SEC_PMD));
+	int scheduler_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_SCHEDULER_PMD));
+	int armv8_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_ARMV8_PMD));
+	int aesni_mb_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD));
+	int qat_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_QAT_SYM_PMD));
+	int mrvl_pmd = rte_cryptodev_driver_id_get(
+			RTE_STR(CRYPTODEV_NAME_MRVL_PMD));
 
 	switch (test_type) {
 	case BLKCIPHER_AES_CHAIN_TYPE:
@@ -647,29 +643,24 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 		break;
 	}
 
-	switch (cryptodev_type) {
-	case RTE_CRYPTODEV_AESNI_MB_PMD:
+	if (driver_id == aesni_mb_pmd)
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MB;
-		break;
-	case RTE_CRYPTODEV_QAT_SYM_PMD:
+	else if (driver_id == qat_pmd)
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_QAT;
-		break;
-	case RTE_CRYPTODEV_OPENSSL_PMD:
+	else if (driver_id == openssl_pmd)
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_OPENSSL;
-		break;
-	case RTE_CRYPTODEV_ARMV8_PMD:
+	else if (driver_id == armv8_pmd)
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_ARMV8;
-		break;
-	case RTE_CRYPTODEV_SCHEDULER_PMD:
+	else if (driver_id == scheduler_pmd)
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER;
-		break;
-	case RTE_CRYPTODEV_DPAA2_SEC_PMD:
+	else if (driver_id == dpaa2_sec_pmd)
 		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_DPAA2_SEC;
-		break;
-	default:
+	else if (driver_id == dpaa_sec_pmd)
+		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_DPAA_SEC;
+	else if (driver_id == mrvl_pmd)
+		target_pmd_mask = BLOCKCIPHER_TEST_TARGET_PMD_MRVL;
+	else
 		TEST_ASSERT(0, "Unrecognized cryptodev type");
-		break;
-	}
 
 	for (i = 0; i < n_test_cases; i++) {
 		const struct blockcipher_test_case *tc = &tcs[i];
@@ -678,7 +669,7 @@ test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 			continue;
 
 		status = test_blockcipher_one_case(tc, mbuf_pool, op_mpool,
-			dev_id, cryptodev_type, test_msg);
+			sess_mpool, dev_id, driver_id, test_msg);
 
 		printf("  %u) TestCase %s %s\n", test_index ++,
 			tc->test_descr, test_msg);

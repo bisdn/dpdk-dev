@@ -1,7 +1,7 @@
 #   BSD LICENSE
 #
 #   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
-#   Copyright (c) 2016 NXP. All rights reserved.
+#   Copyright 2016 NXP.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -31,6 +31,12 @@
 
 include $(RTE_SDK)/mk/rte.vars.mk
 
+ifneq ($(MAKECMDGOALS),clean)
+ifneq ($(CONFIG_RTE_LIBRTE_SECURITY),y)
+$(error "RTE_LIBRTE_SECURITY is required to build RTE_LIBRTE_PMD_DPAA2_SEC")
+endif
+endif
+
 #
 # library name
 #
@@ -45,6 +51,12 @@ CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
 endif
 CFLAGS += -D _GNU_SOURCE
+
+ifeq ($(CONFIG_RTE_TOOLCHAIN_GCC),y)
+ifeq ($(shell test $(GCC_VERSION) -gt 70 && echo 1), 1)
+CFLAGS += -Wno-implicit-fallthrough
+endif
+endif
 
 CFLAGS += -I$(RTE_SDK)/drivers/crypto/dpaa2_sec/
 CFLAGS += -I$(RTE_SDK)/drivers/crypto/dpaa2_sec/mc
@@ -65,14 +77,9 @@ LIBABIVER := 1
 SRCS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += dpaa2_sec_dpseci.c
 SRCS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += mc/dpseci.c
 
-# library dependencies
-DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += lib/librte_eal
-DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += lib/librte_mempool lib/librte_mbuf
-DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += lib/librte_cryptodev
-DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += drivers/bus/fslmc
-DEPDIRS-$(CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC) += drivers/mempool/dpaa2
-
 LDLIBS += -lrte_bus_fslmc
 LDLIBS += -lrte_mempool_dpaa2
+LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool -lrte_ring
+LDLIBS += -lrte_cryptodev
 
 include $(RTE_SDK)/mk/rte.lib.mk

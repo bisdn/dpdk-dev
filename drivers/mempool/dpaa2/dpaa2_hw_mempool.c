@@ -2,7 +2,7 @@
  *   BSD LICENSE
  *
  *   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright (c) 2016 NXP. All rights reserved.
+ *   Copyright 2016 NXP.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -47,7 +47,6 @@
 #include <rte_cycles.h>
 #include <rte_kvargs.h>
 #include <rte_dev.h>
-#include <rte_ethdev.h>
 
 #include <fslmc_logs.h>
 #include <mc/fsl_dpbp.h>
@@ -63,9 +62,10 @@ rte_hw_mbuf_create_pool(struct rte_mempool *mp)
 {
 	struct dpaa2_bp_list *bp_list;
 	struct dpaa2_dpbp_dev *avail_dpbp;
+	struct dpaa2_bp_info *bp_info;
 	struct dpbp_attr dpbp_attr;
 	uint32_t bpid;
-	int ret, p_ret;
+	int ret;
 
 	avail_dpbp = dpaa2_alloc_dpbp_dev();
 
@@ -78,7 +78,7 @@ rte_hw_mbuf_create_pool(struct rte_mempool *mp)
 		ret = dpaa2_affine_qbman_swp();
 		if (ret) {
 			RTE_LOG(ERR, PMD, "Failure in affining portal\n");
-			return ret;
+			goto err1;
 		}
 	}
 
@@ -86,7 +86,7 @@ rte_hw_mbuf_create_pool(struct rte_mempool *mp)
 	if (ret != 0) {
 		PMD_INIT_LOG(ERR, "Resource enable failure with"
 			" err code: %d\n", ret);
-		return ret;
+		goto err1;
 	}
 
 	ret = dpbp_get_attributes(&avail_dpbp->dpbp, CMD_PRI_LOW,
@@ -94,10 +94,16 @@ rte_hw_mbuf_create_pool(struct rte_mempool *mp)
 	if (ret != 0) {
 		PMD_INIT_LOG(ERR, "Resource read failure with"
 			     " err code: %d\n", ret);
-		p_ret = ret;
-		ret = dpbp_disable(&avail_dpbp->dpbp, CMD_PRI_LOW,
-				   avail_dpbp->token);
-		return p_ret;
+		goto err2;
+	}
+
+	bp_info = rte_malloc(NULL,
+			     sizeof(struct dpaa2_bp_info),
+			     RTE_CACHE_LINE_SIZE);
+	if (!bp_info) {
+		PMD_INIT_LOG(ERR, "No heap memory available for bp_info");
+		ret = -ENOMEM;
+		goto err2;
 	}
 
 	/* Allocate the bp_list which will be added into global_bp_list */
@@ -105,7 +111,8 @@ rte_hw_mbuf_create_pool(struct rte_mempool *mp)
 			     RTE_CACHE_LINE_SIZE);
 	if (!bp_list) {
 		PMD_INIT_LOG(ERR, "No heap memory available");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err3;
 	}
 
 	/* Set parameters of buffer pool list */
@@ -127,12 +134,22 @@ rte_hw_mbuf_create_pool(struct rte_mempool *mp)
 	rte_dpaa2_bpid_info[bpid].bp_list = bp_list;
 	rte_dpaa2_bpid_info[bpid].bpid = bpid;
 
-	mp->pool_data = (void *)&rte_dpaa2_bpid_info[bpid];
+	rte_memcpy(bp_info, (void *)&rte_dpaa2_bpid_info[bpid],
+		   sizeof(struct dpaa2_bp_info));
+	mp->pool_data = (void *)bp_info;
 
 	PMD_INIT_LOG(DEBUG, "BP List created for bpid =%d", dpbp_attr.bpid);
 
 	h_bp_list = bp_list;
 	return 0;
+err3:
+	rte_free(bp_info);
+err2:
+	dpbp_disable(&avail_dpbp->dpbp, CMD_PRI_LOW, avail_dpbp->token);
+err1:
+	dpaa2_free_dpbp_dev(avail_dpbp);
+
+	return ret;
 }
 
 static void
@@ -161,7 +178,7 @@ rte_hw_mbuf_free_pool(struct rte_mempool *mp)
 		while (temp) {
 			if (temp == bp) {
 				prev->next = temp->next;
-				free(bp);
+				rte_free(bp);
 				break;
 			}
 			prev = temp;
@@ -169,6 +186,7 @@ rte_hw_mbuf_free_pool(struct rte_mempool *mp)
 		}
 	}
 
+	rte_free(mp->pool_data);
 	dpaa2_free_dpbp_dev(dpbp_node);
 }
 
@@ -188,7 +206,7 @@ rte_dpaa2_mbuf_release(struct rte_mempool *pool __rte_unused,
 	if (unlikely(!DPAA2_PER_LCORE_DPIO)) {
 		ret = dpaa2_affine_qbman_swp();
 		if (ret != 0) {
-			RTE_LOG(ERR, PMD, "Failed to allocate IO portal");
+			RTE_LOG(ERR, PMD, "Failed to allocate IO portal\n");
 			return;
 		}
 	}
@@ -207,7 +225,7 @@ rte_dpaa2_mbuf_release(struct rte_mempool *pool __rte_unused,
 	/* convert mbuf to buffers for the remainder */
 	for (i = 0; i < n ; i++) {
 #ifdef RTE_LIBRTE_DPAA2_USE_PHYS_IOVA
-		bufs[i] = (uint64_t)rte_mempool_virt2phy(pool, obj_table[i])
+		bufs[i] = (uint64_t)rte_mempool_virt2iova(obj_table[i])
 				+ meta_data_size;
 #else
 		bufs[i] = (uint64_t)obj_table[i] + meta_data_size;
@@ -226,7 +244,7 @@ aligned:
 		for (i = 0; i < DPAA2_MBUF_MAX_ACQ_REL; i++) {
 #ifdef RTE_LIBRTE_DPAA2_USE_PHYS_IOVA
 			bufs[i] = (uint64_t)
-				  rte_mempool_virt2phy(pool, obj_table[n + i])
+				  rte_mempool_virt2iova(obj_table[n + i])
 				  + meta_data_size;
 #else
 			bufs[i] = (uint64_t)obj_table[n + i] + meta_data_size;
@@ -267,7 +285,7 @@ rte_dpaa2_mbuf_alloc_bulk(struct rte_mempool *pool,
 	if (unlikely(!DPAA2_PER_LCORE_DPIO)) {
 		ret = dpaa2_affine_qbman_swp();
 		if (ret != 0) {
-			RTE_LOG(ERR, PMD, "Failed to allocate IO portal");
+			RTE_LOG(ERR, PMD, "Failed to allocate IO portal\n");
 			return ret;
 		}
 	}
@@ -294,7 +312,7 @@ rte_dpaa2_mbuf_alloc_bulk(struct rte_mempool *pool,
 			/* Releasing all buffers allocated */
 			rte_dpaa2_mbuf_release(pool, obj_table, bpid,
 					   bp_info->meta_data_size, n);
-			return ret;
+			return -ENOBUFS;
 		}
 		/* assigning mbuf from the acquired objects */
 		for (i = 0; (i < ret) && bufs[i]; i++) {
@@ -323,7 +341,7 @@ rte_hw_mbuf_free_bulk(struct rte_mempool *pool,
 
 	bp_info = mempool_to_bpinfo(pool);
 	if (!(bp_info->bp_list)) {
-		RTE_LOG(ERR, PMD, "DPAA2 buffer pool not configured");
+		RTE_LOG(ERR, PMD, "DPAA2 buffer pool not configured\n");
 		return -ENOENT;
 	}
 	rte_dpaa2_mbuf_release(pool, obj_table, bp_info->bpid,
@@ -341,7 +359,7 @@ rte_hw_mbuf_get_count(const struct rte_mempool *mp)
 	struct dpaa2_dpbp_dev *dpbp_node;
 
 	if (!mp || !mp->pool_data) {
-		RTE_LOG(ERR, PMD, "Invalid mempool provided");
+		RTE_LOG(ERR, PMD, "Invalid mempool provided\n");
 		return 0;
 	}
 
@@ -351,12 +369,12 @@ rte_hw_mbuf_get_count(const struct rte_mempool *mp)
 	ret = dpbp_get_num_free_bufs(&dpbp_node->dpbp, CMD_PRI_LOW,
 				     dpbp_node->token, &num_of_bufs);
 	if (ret) {
-		RTE_LOG(ERR, PMD, "Unable to obtain free buf count (err=%d)",
+		RTE_LOG(ERR, PMD, "Unable to obtain free buf count (err=%d)\n",
 			ret);
 		return 0;
 	}
 
-	RTE_LOG(DEBUG, PMD, "Free bufs = %u", num_of_bufs);
+	RTE_LOG(DEBUG, PMD, "Free bufs = %u\n", num_of_bufs);
 
 	return num_of_bufs;
 }

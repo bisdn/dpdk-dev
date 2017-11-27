@@ -50,7 +50,8 @@ offload are still consumed by the test tool and included in the cycle-count.
 These cycles are consumed by retries and inefficient API calls enqueuing and
 dequeuing smaller bursts than specified by the cmdline parameter. This results
 in a larger cycle-count measurement and should not be interpreted as an offload
-cost measurement.
+cost measurement. Using "pmd-cyclecount" mode will give a better idea of
+actual costs of hardware acceleration.
 
 On hardware devices the throughput measurement is not necessarily the maximum
 possible for the device, e.g. it may be necessary to use multiple cores to keep
@@ -134,6 +135,7 @@ The following are the appication command-line options:
            throughput
            latency
            verify
+           pmd-cyclecount
 
 * ``--silent``
 
@@ -170,9 +172,11 @@ The following are the appication command-line options:
           * List of values, up to 32 values, separated in commas (i.e. ``--buffer-sz 32,64,128``)
 
 
-* ``--segments-nb <n>``
+* ``--segment-sz <n>``
 
-        Set the number of segments per packet.
+        Set the size of the segment to use, for Scatter Gather List testing.
+        By default, it is set to the size of the maximum buffer size, including the digest size,
+        so a single segment is created.
 
 * ``--devtype <name>``
 
@@ -186,6 +190,11 @@ The following are the appication command-line options:
            crypto_snow3g
            crypto_kasumi
            crypto_zuc
+           crypto_dpaa_sec
+           crypto_dpaa2_sec
+           crypto_armv8
+           crypto_scheduler
+           crypto_mrvl
 
 * ``--optype <name>``
 
@@ -223,10 +232,8 @@ The following are the appication command-line options:
            3des-ecb
            3des-ctr
            aes-cbc
-           aes-ccm
            aes-ctr
            aes-ecb
-           aes-gcm
            aes-f8
            aes-xts
            arc4
@@ -257,9 +264,7 @@ The following are the appication command-line options:
 
            3des-cbc
            aes-cbc-mac
-           aes-ccm
            aes-cmac
-           aes-gcm
            aes-gmac
            aes-xcbc-mac
            md5
@@ -290,13 +295,51 @@ The following are the appication command-line options:
 
         Set the size of authentication key.
 
-* ``--auth-digest-sz <n>``
+* ``--auth-iv-sz <n>``
 
-        Set the size of authentication digest.
+        Set the size of auth iv.
 
-* ``--auth-aad-sz <n>``
+* ``--aead-algo <name>``
 
-        Set the size of authentication aad.
+        Set AEAD algorithm name, where ``name`` is one
+        of the following::
+
+           aes-ccm
+           aes-gcm
+
+* ``--aead-op <mode>``
+
+        Set AEAD operation mode, where ``mode`` is one of
+        the following::
+
+           encrypt
+           decrypt
+
+* ``--aead-key-sz <n>``
+
+        Set the size of AEAD key.
+
+* ``--aead-iv-sz <n>``
+
+        Set the size of AEAD iv.
+
+* ``--aead-aad-sz <n>``
+
+        Set the size of AEAD aad.
+
+* ``--digest-sz <n>``
+
+        Set the size of digest.
+
+* ``--desc-nb <n>``
+
+        Set number of descriptors for each crypto device.
+
+* ``--pmd-cyclecount-delay-ms <n>``
+
+        Add a delay (in milliseconds) between enqueue and dequeue in
+        pmd-cyclecount benchmarking mode (useful when benchmarking
+        hardware acceleration).
 
 * ``--csv-friendly``
 
@@ -345,9 +388,13 @@ a string of bytes in C byte array format::
 
         Key used in auth operation.
 
-* ``iv``
+* ``cipher_iv``
 
-        Initial vector.
+        Cipher Initial Vector.
+
+* ``auth_iv``
+
+        Auth Initial Vector.
 
 * ``aad``
 
@@ -364,17 +411,17 @@ Call application for performance throughput test of single Aesni MB PMD
 for cipher encryption aes-cbc and auth generation sha1-hmac,
 one million operations, burst size 32, packet size 64::
 
-   dpdk-test-crypto-perf -l 6-7 --vdev crypto_aesni_mb_pmd -w 0000:00:00.0 --
+   dpdk-test-crypto-perf -l 6-7 --vdev crypto_aesni_mb -w 0000:00:00.0 --
    --ptest throughput --devtype crypto_aesni_mb --optype cipher-then-auth
    --cipher-algo aes-cbc --cipher-op encrypt --cipher-key-sz 16 --auth-algo
-   sha1-hmac --auth-op generate --auth-key-sz 64 --auth-digest-sz 12
+   sha1-hmac --auth-op generate --auth-key-sz 64 --digest-sz 12
    --total-ops 10000000 --burst-sz 32 --buffer-sz 64
 
 Call application for performance latency test of two Aesni MB PMD executed
 on two cores for cipher encryption aes-cbc, ten operations in silent mode::
 
-   dpdk-test-crypto-perf -l 4-7 --vdev crypto_aesni_mb_pmd1
-   --vdev crypto_aesni_mb_pmd2 -w 0000:00:00.0 -- --devtype crypto_aesni_mb
+   dpdk-test-crypto-perf -l 4-7 --vdev crypto_aesni_mb1
+   --vdev crypto_aesni_mb2 -w 0000:00:00.0 -- --devtype crypto_aesni_mb
    --cipher-algo aes-cbc --cipher-key-sz 16 --cipher-iv-sz 16
    --cipher-op encrypt --optype cipher-only --silent
    --ptest latency --total-ops 10
@@ -385,10 +432,9 @@ in silent mode, test vector provide in file "test_aes_gcm.data"
 with packet verification::
 
    dpdk-test-crypto-perf -l 4-7 --vdev crypto_openssl -w 0000:00:00.0 --
-   --devtype crypto_openssl --cipher-algo aes-gcm --cipher-key-sz 16
-   --cipher-iv-sz 16 --cipher-op encrypt --auth-algo aes-gcm --auth-key-sz 16
-   --auth-digest-sz 16 --auth-aad-sz 16 --auth-op generate --optype aead
-   --silent --ptest verify --total-ops 10
+   --devtype crypto_openssl --aead-algo aes-gcm --aead-key-sz 16
+   --aead-iv-sz 16 --aead-op encrypt --aead-aad-sz 16 --digest-sz 16
+   --optype aead --silent --ptest verify --total-ops 10
    --test-file test_aes_gcm.data
 
 Test vector file for cipher algorithm aes cbc 256 with authorization sha::
@@ -412,7 +458,7 @@ Test vector file for cipher algorithm aes cbc 256 with authorization sha::
    0xf5, 0x0c, 0xe7, 0xa2, 0xa6, 0x23, 0xd5, 0x3d, 0x95, 0xd8, 0xcd, 0x86, 0x79, 0xf5, 0x01, 0x47,
    0x4f, 0xf9, 0x1d, 0x9d, 0x36, 0xf7, 0x68, 0x1a, 0x64, 0x44, 0x58, 0x5d, 0xe5, 0x81, 0x15, 0x2a,
    0x41, 0xe4, 0x0e, 0xaa, 0x1f, 0x04, 0x21, 0xff, 0x2c, 0xf3, 0x73, 0x2b, 0x48, 0x1e, 0xd2, 0xf7
-   iv =
+   cipher_iv =
    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
    # Section sha 1 hmac buff 32
    [sha1_hmac_buff_32]

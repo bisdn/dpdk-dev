@@ -30,17 +30,18 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <inttypes.h>
 #include <string.h>
 
-#include <rte_vdev.h>
-#include <rte_memzone.h>
+#include <rte_bus_vdev.h>
 #include <rte_kvargs.h>
 #include <rte_ring.h>
 #include <rte_errno.h>
+#include <rte_event_ring.h>
+#include <rte_service_component.h>
 
 #include "sw_evdev.h"
 #include "iq_ring.h"
-#include "event_ring.h"
 
 #define EVENTDEV_NAME_SW_PMD event_sw
 #define NUMA_NODE_ARG "numa_node"
@@ -90,7 +91,8 @@ sw_port_link(struct rte_eventdev *dev, void *port, const uint8_t queues[],
 		} else if (q->type == RTE_SCHED_TYPE_ORDERED) {
 			p->num_ordered_qids++;
 			p->num_qids_mapped++;
-		} else if (q->type == RTE_SCHED_TYPE_ATOMIC) {
+		} else if (q->type == RTE_SCHED_TYPE_ATOMIC ||
+				q->type == RTE_SCHED_TYPE_PARALLEL) {
 			p->num_qids_mapped++;
 		}
 
@@ -138,7 +140,7 @@ sw_port_setup(struct rte_eventdev *dev, uint8_t port_id,
 {
 	struct sw_evdev *sw = sw_pmd_priv(dev);
 	struct sw_port *p = &sw->ports[port_id];
-	char buf[QE_RING_NAMESIZE];
+	char buf[RTE_RING_NAMESIZE];
 	unsigned int i;
 
 	struct rte_event_dev_info info;
@@ -159,10 +161,19 @@ sw_port_setup(struct rte_eventdev *dev, uint8_t port_id,
 	p->id = port_id;
 	p->sw = sw;
 
-	snprintf(buf, sizeof(buf), "sw%d_%s", dev->data->dev_id,
-			"rx_worker_ring");
-	p->rx_worker_ring = qe_ring_create(buf, MAX_SW_PROD_Q_DEPTH,
-			dev->data->socket_id);
+	/* check to see if rings exists - port_setup() can be called multiple
+	 * times legally (assuming device is stopped). If ring exists, free it
+	 * to so it gets re-created with the correct size
+	 */
+	snprintf(buf, sizeof(buf), "sw%d_p%u_%s", dev->data->dev_id,
+			port_id, "rx_worker_ring");
+	struct rte_event_ring *existing_ring = rte_event_ring_lookup(buf);
+	if (existing_ring)
+		rte_event_ring_free(existing_ring);
+
+	p->rx_worker_ring = rte_event_ring_create(buf, MAX_SW_PROD_Q_DEPTH,
+			dev->data->socket_id,
+			RING_F_SP_ENQ | RING_F_SC_DEQ | RING_F_EXACT_SZ);
 	if (p->rx_worker_ring == NULL) {
 		SW_LOG_ERR("Error creating RX worker ring for port %d\n",
 				port_id);
@@ -171,12 +182,18 @@ sw_port_setup(struct rte_eventdev *dev, uint8_t port_id,
 
 	p->inflight_max = conf->new_event_threshold;
 
-	snprintf(buf, sizeof(buf), "sw%d_%s", dev->data->dev_id,
-			"cq_worker_ring");
-	p->cq_worker_ring = qe_ring_create(buf, conf->dequeue_depth,
-			dev->data->socket_id);
+	/* check if ring exists, same as rx_worker above */
+	snprintf(buf, sizeof(buf), "sw%d_p%u, %s", dev->data->dev_id,
+			port_id, "cq_worker_ring");
+	existing_ring = rte_event_ring_lookup(buf);
+	if (existing_ring)
+		rte_event_ring_free(existing_ring);
+
+	p->cq_worker_ring = rte_event_ring_create(buf, conf->dequeue_depth,
+			dev->data->socket_id,
+			RING_F_SP_ENQ | RING_F_SC_DEQ | RING_F_EXACT_SZ);
 	if (p->cq_worker_ring == NULL) {
-		qe_ring_destroy(p->rx_worker_ring);
+		rte_event_ring_free(p->rx_worker_ring);
 		SW_LOG_ERR("Error creating CQ worker ring for port %d\n",
 				port_id);
 		return -1;
@@ -202,8 +219,8 @@ sw_port_release(void *port)
 	if (p == NULL)
 		return;
 
-	qe_ring_destroy(p->rx_worker_ring);
-	qe_ring_destroy(p->cq_worker_ring);
+	rte_event_ring_free(p->rx_worker_ring);
+	rte_event_ring_free(p->cq_worker_ring);
 	memset(p, 0, sizeof(*p));
 }
 
@@ -327,28 +344,14 @@ sw_queue_setup(struct rte_eventdev *dev, uint8_t queue_id,
 {
 	int type;
 
-	/* SINGLE_LINK can be OR-ed with other types, so handle first */
+	type = conf->schedule_type;
+
 	if (RTE_EVENT_QUEUE_CFG_SINGLE_LINK & conf->event_queue_cfg) {
 		type = SW_SCHED_TYPE_DIRECT;
-	} else {
-		switch (conf->event_queue_cfg) {
-		case RTE_EVENT_QUEUE_CFG_ATOMIC_ONLY:
-			type = RTE_SCHED_TYPE_ATOMIC;
-			break;
-		case RTE_EVENT_QUEUE_CFG_ORDERED_ONLY:
-			type = RTE_SCHED_TYPE_ORDERED;
-			break;
-		case RTE_EVENT_QUEUE_CFG_PARALLEL_ONLY:
-			type = RTE_SCHED_TYPE_PARALLEL;
-			break;
-		case RTE_EVENT_QUEUE_CFG_ALL_TYPES:
-			SW_LOG_ERR("QUEUE_CFG_ALL_TYPES not supported\n");
-			return -ENOTSUP;
-		default:
-			SW_LOG_ERR("Unknown queue type %d requested\n",
-				   conf->event_queue_cfg);
-			return -EINVAL;
-		}
+	} else if (RTE_EVENT_QUEUE_CFG_ALL_TYPES
+			& conf->event_queue_cfg) {
+		SW_LOG_ERR("QUEUE_CFG_ALL_TYPES not supported\n");
+		return -ENOTSUP;
 	}
 
 	struct sw_evdev *sw = sw_pmd_priv(dev);
@@ -382,7 +385,7 @@ sw_queue_def_conf(struct rte_eventdev *dev, uint8_t queue_id,
 	static const struct rte_event_queue_conf default_conf = {
 		.nb_atomic_flows = 4096,
 		.nb_atomic_order_sequences = 1,
-		.event_queue_cfg = RTE_EVENT_QUEUE_CFG_ATOMIC_ONLY,
+		.schedule_type = RTE_SCHED_TYPE_ATOMIC,
 		.priority = RTE_EVENT_DEV_PRIORITY_NORMAL,
 	};
 
@@ -419,6 +422,19 @@ sw_dev_configure(const struct rte_eventdev *dev)
 	return 0;
 }
 
+struct rte_eth_dev;
+
+static int
+sw_eth_rx_adapter_caps_get(const struct rte_eventdev *dev,
+			const struct rte_eth_dev *eth_dev,
+			uint32_t *caps)
+{
+	RTE_SET_USED(dev);
+	RTE_SET_USED(eth_dev);
+	*caps = RTE_EVENT_ETH_RX_ADAPTER_SW_CAP;
+	return 0;
+}
+
 static void
 sw_info_get(struct rte_eventdev *dev, struct rte_event_dev_info *info)
 {
@@ -435,6 +451,7 @@ sw_info_get(struct rte_eventdev *dev, struct rte_event_dev_info *info)
 			.max_event_port_enqueue_depth = MAX_SW_PROD_Q_DEPTH,
 			.max_num_events = SW_INFLIGHT_EVENTS_TOTAL,
 			.event_dev_cap = (RTE_EVENT_DEV_CAP_QUEUE_QOS |
+					RTE_EVENT_DEV_CAP_BURST_MODE |
 					RTE_EVENT_DEV_CAP_EVENT_QOS),
 	};
 
@@ -509,8 +526,9 @@ sw_dump(struct rte_eventdev *dev, FILE *f)
 		fprintf(f, "\n");
 
 		if (p->rx_worker_ring) {
-			uint64_t used = qe_ring_count(p->rx_worker_ring);
-			uint64_t space = qe_ring_free_count(p->rx_worker_ring);
+			uint64_t used = rte_event_ring_count(p->rx_worker_ring);
+			uint64_t space = rte_event_ring_free_count(
+					p->rx_worker_ring);
 			const char *col = (space == 0) ? COL_RED : COL_RESET;
 			fprintf(f, "\t%srx ring used: %4"PRIu64"\tfree: %4"
 					PRIu64 COL_RESET"\n", col, used, space);
@@ -518,8 +536,9 @@ sw_dump(struct rte_eventdev *dev, FILE *f)
 			fprintf(f, "\trx ring not initialized.\n");
 
 		if (p->cq_worker_ring) {
-			uint64_t used = qe_ring_count(p->cq_worker_ring);
-			uint64_t space = qe_ring_free_count(p->cq_worker_ring);
+			uint64_t used = rte_event_ring_count(p->cq_worker_ring);
+			uint64_t space = rte_event_ring_free_count(
+					p->cq_worker_ring);
 			const char *col = (space == 0) ? COL_RED : COL_RESET;
 			fprintf(f, "\t%scq ring used: %4"PRIu64"\tfree: %4"
 					PRIu64 COL_RESET"\n", col, used, space);
@@ -559,12 +578,13 @@ sw_dump(struct rte_eventdev *dev, FILE *f)
 				inflights += qid->fids[flow].pcount;
 			}
 
-		uint32_t cq;
-		fprintf(f, "\tInflights: %u\tFlows pinned per port: ",
-				inflights);
-		for (cq = 0; cq < sw->port_count; cq++)
-			fprintf(f, "%d ", affinities_per_port[cq]);
-		fprintf(f, "\n");
+		uint32_t port;
+		fprintf(f, "\tPer Port Stats:\n");
+		for (port = 0; port < sw->port_count; port++) {
+			fprintf(f, "\t  Port %d: Pkts: %"PRIu64, port,
+					qid->to_port[port]);
+			fprintf(f, "\tFlows: %d\n", affinities_per_port[port]);
+		}
 
 		uint32_t iq;
 		uint32_t iq_printed = 0;
@@ -593,6 +613,16 @@ sw_start(struct rte_eventdev *dev)
 {
 	unsigned int i, j;
 	struct sw_evdev *sw = sw_pmd_priv(dev);
+
+	rte_service_component_runstate_set(sw->service_id, 1);
+
+	/* check a service core is mapped to this service */
+	if (!rte_service_runstate_get(sw->service_id)) {
+		SW_LOG_ERR("Warning: No Service core enabled on service %s\n",
+				sw->service_name);
+		return -ENOENT;
+	}
+
 	/* check all ports are set up */
 	for (i = 0; i < sw->port_count; i++)
 		if (sw->ports[i].rx_worker_ring == NULL) {
@@ -695,6 +725,14 @@ set_credit_quanta(const char *key __rte_unused, const char *value, void *opaque)
 	return 0;
 }
 
+
+static int32_t sw_sched_service_func(void *args)
+{
+	struct rte_eventdev *dev = args;
+	sw_event_schedule(dev);
+	return 0;
+}
+
 static int
 sw_probe(struct rte_vdev_device *vdev)
 {
@@ -714,6 +752,8 @@ sw_probe(struct rte_vdev_device *vdev)
 			.port_release = sw_port_release,
 			.port_link = sw_port_link,
 			.port_unlink = sw_port_unlink,
+
+			.eth_rx_adapter_caps_get = sw_eth_rx_adapter_caps_get,
 
 			.xstats_get = sw_xstats_get,
 			.xstats_get_names = sw_xstats_get_names,
@@ -792,9 +832,10 @@ sw_probe(struct rte_vdev_device *vdev)
 	dev->dev_ops = &evdev_sw_ops;
 	dev->enqueue = sw_event_enqueue;
 	dev->enqueue_burst = sw_event_enqueue_burst;
+	dev->enqueue_new_burst = sw_event_enqueue_burst;
+	dev->enqueue_forward_burst = sw_event_enqueue_burst;
 	dev->dequeue = sw_event_dequeue;
 	dev->dequeue_burst = sw_event_dequeue_burst;
-	dev->schedule = sw_event_schedule;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
@@ -805,6 +846,25 @@ sw_probe(struct rte_vdev_device *vdev)
 	/* copy values passed from vdev command line to instance */
 	sw->credit_update_quanta = credit_quanta;
 	sw->sched_quanta = sched_quanta;
+
+	/* register service with EAL */
+	struct rte_service_spec service;
+	memset(&service, 0, sizeof(struct rte_service_spec));
+	snprintf(service.name, sizeof(service.name), "%s_service", name);
+	snprintf(sw->service_name, sizeof(sw->service_name), "%s_service",
+			name);
+	service.socket_id = socket_id;
+	service.callback = sw_sched_service_func;
+	service.callback_userdata = (void *)dev;
+
+	int32_t ret = rte_service_component_register(&service, &sw->service_id);
+	if (ret) {
+		SW_LOG_ERR("service register() failed");
+		return -ENOEXEC;
+	}
+
+	dev->data->service_inited = 1;
+	dev->data->service_id = sw->service_id;
 
 	return 0;
 }

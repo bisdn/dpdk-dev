@@ -1,7 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2017 NXP.
-#   All rights reserved.
+#   Copyright 2017 NXP.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -41,6 +40,7 @@ CFLAGS += $(WERROR_FLAGS)
 
 # Headers
 CFLAGS += -I$(RTE_SDK)/lib/librte_mempool
+LDLIBS += -lrte_eal -lrte_mempool -lrte_ring
 
 EXPORT_MAP := rte_mempool_stack_version.map
 

@@ -1,7 +1,7 @@
 #   BSD LICENSE
 #
 #   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
-#   Copyright (c) 2016 NXP. All rights reserved.
+#   Copyright 2016 NXP.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -63,8 +63,11 @@ SRCS-$(CONFIG_RTE_LIBRTE_DPAA2_PMD) += base/dpaa2_hw_dpni.c
 SRCS-$(CONFIG_RTE_LIBRTE_DPAA2_PMD) += dpaa2_rxtx.c
 SRCS-$(CONFIG_RTE_LIBRTE_DPAA2_PMD) += dpaa2_ethdev.c
 SRCS-$(CONFIG_RTE_LIBRTE_DPAA2_PMD) += mc/dpni.c
+SRCS-$(CONFIG_RTE_LIBRTE_DPAA2_PMD) += mc/dpkg.c
 
 LDLIBS += -lrte_bus_fslmc
 LDLIBS += -lrte_mempool_dpaa2
+LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool -lrte_ring
+LDLIBS += -lrte_ethdev -lrte_net -lrte_kvargs
 
 include $(RTE_SDK)/mk/rte.lib.mk

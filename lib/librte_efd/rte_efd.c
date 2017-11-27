@@ -42,7 +42,6 @@
 #include <rte_eal_memconfig.h>
 #include <rte_errno.h>
 #include <rte_malloc.h>
-#include <rte_memzone.h>
 #include <rte_prefetch.h>
 #include <rte_branch_prediction.h>
 #include <rte_memcpy.h>
@@ -53,6 +52,8 @@
 #include "rte_efd.h"
 #if defined(RTE_ARCH_X86)
 #include "rte_efd_x86.h"
+#elif defined(RTE_ARCH_ARM64)
+#include "rte_efd_arm64.h"
 #endif
 
 #define EFD_KEY(key_idx, table) (table->keys + ((key_idx) * table->key_len))
@@ -103,6 +104,7 @@ allocated memory
 enum efd_lookup_internal_function {
 	EFD_LOOKUP_SCALAR = 0,
 	EFD_LOOKUP_AVX2,
+	EFD_LOOKUP_NEON,
 	EFD_LOOKUP_NUM
 };
 
@@ -674,6 +676,16 @@ rte_efd_create(const char *name, uint32_t max_num_rules, uint32_t key_len,
 		table->lookup_fn = EFD_LOOKUP_AVX2;
 	else
 #endif
+#if defined(RTE_ARCH_ARM64)
+	/*
+	 * For less than or equal to 16 bits, scalar function performs better
+	 * than vectorised version
+	 */
+	if (RTE_EFD_VALUE_NUM_BITS > 16 &&
+	    rte_cpu_get_flag_enabled(RTE_CPUFLAG_NEON))
+		table->lookup_fn = EFD_LOOKUP_NEON;
+	else
+#endif
 		table->lookup_fn = EFD_LOOKUP_SCALAR;
 
 	/*
@@ -940,7 +952,7 @@ revert_groups(struct efd_offline_group_rules *previous_group,
  *     This operation was still successful, and entry contains a valid update
  *   RTE_EFD_UPDATE_FAILED
  *     Either the EFD failed to find a suitable perfect hash or the group was full
- *     This is a fatal error, and the table is now in an indeterminite state
+ *     This is a fatal error, and the table is now in an indeterminate state
  *   RTE_EFD_UPDATE_NO_CHANGE
  *     Operation resulted in no change to the table (same value already exists)
  *   0
@@ -1265,12 +1277,21 @@ efd_lookup_internal(const struct efd_online_group_entry * const group,
 
 	switch (lookup_fn) {
 
-#if defined(RTE_ARCH_X86)
+#if defined(RTE_ARCH_X86) && defined(CC_SUPPORT_AVX2)
 	case EFD_LOOKUP_AVX2:
 		return efd_lookup_internal_avx2(group->hash_idx,
 					group->lookup_table,
 					hash_val_a,
 					hash_val_b);
+		break;
+#endif
+#if defined(RTE_ARCH_ARM64)
+	case EFD_LOOKUP_NEON:
+		return efd_lookup_internal_neon(group->hash_idx,
+					group->lookup_table,
+					hash_val_a,
+					hash_val_b);
+		break;
 #endif
 	case EFD_LOOKUP_SCALAR:
 	/* Fall-through */

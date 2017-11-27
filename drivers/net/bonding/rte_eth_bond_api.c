@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,7 +37,7 @@
 #include <rte_malloc.h>
 #include <rte_ethdev.h>
 #include <rte_tcp.h>
-#include <rte_vdev.h>
+#include <rte_bus_vdev.h>
 #include <rte_kvargs.h>
 
 #include "rte_eth_bond.h"
@@ -56,26 +56,31 @@ check_for_bonded_ethdev(const struct rte_eth_dev *eth_dev)
 }
 
 int
-valid_bonded_port_id(uint8_t port_id)
+valid_bonded_port_id(uint16_t port_id)
 {
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);
 	return check_for_bonded_ethdev(&rte_eth_devices[port_id]);
 }
 
 int
-valid_slave_port_id(uint8_t port_id)
+valid_slave_port_id(uint16_t port_id, uint8_t mode)
 {
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);
 
 	/* Verify that port_id refers to a non bonded port */
-	if (check_for_bonded_ethdev(&rte_eth_devices[port_id]) == 0)
+	if (check_for_bonded_ethdev(&rte_eth_devices[port_id]) == 0 &&
+			mode == BONDING_MODE_8023AD) {
+		RTE_BOND_LOG(ERR, "Cannot add slave to bonded device in 802.3ad"
+				" mode as slave is also a bonded device, only "
+				"physical devices can be support in this mode.");
 		return -1;
+	}
 
 	return 0;
 }
 
 void
-activate_slave(struct rte_eth_dev *eth_dev, uint8_t port_id)
+activate_slave(struct rte_eth_dev *eth_dev, uint16_t port_id)
 {
 	struct bond_dev_private *internals = eth_dev->data->dev_private;
 	uint8_t active_count = internals->active_slave_count;
@@ -102,11 +107,11 @@ activate_slave(struct rte_eth_dev *eth_dev, uint8_t port_id)
 }
 
 void
-deactivate_slave(struct rte_eth_dev *eth_dev, uint8_t port_id)
+deactivate_slave(struct rte_eth_dev *eth_dev, uint16_t port_id)
 {
-	uint8_t slave_pos;
+	uint16_t slave_pos;
 	struct bond_dev_private *internals = eth_dev->data->dev_private;
-	uint8_t active_count = internals->active_slave_count;
+	uint16_t active_count = internals->active_slave_count;
 
 	if (internals->mode == BONDING_MODE_8023AD) {
 		bond_mode_8023ad_stop(eth_dev);
@@ -143,28 +148,12 @@ deactivate_slave(struct rte_eth_dev *eth_dev, uint8_t port_id)
 	}
 }
 
-uint8_t
-number_of_sockets(void)
-{
-	int sockets = 0;
-	int i;
-	const struct rte_memseg *ms = rte_eal_get_physmem_layout();
-
-	for (i = 0; ((i < RTE_MAX_MEMSEG) && (ms[i].addr != NULL)); i++) {
-		if (sockets < ms[i].socket_id)
-			sockets = ms[i].socket_id;
-	}
-
-	/* Number of sockets = maximum socket_id + 1 */
-	return ++sockets;
-}
-
 int
 rte_eth_bond_create(const char *name, uint8_t mode, uint8_t socket_id)
 {
 	struct bond_dev_private *internals;
 	char devargs[52];
-	uint8_t port_id;
+	uint16_t port_id;
 	int ret;
 
 	if (name == NULL) {
@@ -204,7 +193,7 @@ rte_eth_bond_free(const char *name)
 }
 
 static int
-slave_vlan_filter_set(uint8_t bonded_port_id, uint8_t slave_port_id)
+slave_vlan_filter_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
 	struct rte_eth_dev *bonded_eth_dev;
 	struct bond_dev_private *internals;
@@ -244,18 +233,18 @@ slave_vlan_filter_set(uint8_t bonded_port_id, uint8_t slave_port_id)
 }
 
 static int
-__eth_bond_slave_add_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
+__eth_bond_slave_add_lock_free(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
 	struct rte_eth_dev *bonded_eth_dev, *slave_eth_dev;
 	struct bond_dev_private *internals;
 	struct rte_eth_link link_props;
 	struct rte_eth_dev_info dev_info;
 
-	if (valid_slave_port_id(slave_port_id) != 0)
-		return -1;
-
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	internals = bonded_eth_dev->data->dev_private;
+
+	if (valid_slave_port_id(slave_port_id, internals->mode) != 0)
+		return -1;
 
 	slave_eth_dev = &rte_eth_devices[slave_port_id];
 	if (slave_eth_dev->data->dev_flags & RTE_ETH_DEV_BONDED_SLAVE) {
@@ -312,6 +301,14 @@ __eth_bond_slave_add_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
 		internals->rx_offload_capa &= dev_info.rx_offload_capa;
 		internals->tx_offload_capa &= dev_info.tx_offload_capa;
 		internals->flow_type_rss_offloads &= dev_info.flow_type_rss_offloads;
+
+		if (link_properties_valid(bonded_eth_dev,
+				&slave_eth_dev->data->dev_link) != 0) {
+			RTE_BOND_LOG(ERR, "Invalid link properties for slave %d"
+					" in bonding mode %d", slave_port_id,
+					internals->mode);
+			return -1;
+		}
 
 		/* RETA size is GCD of all slaves RETA sizes, so, if all sizes will be
 		 * the power of 2, the lower one is GCD
@@ -371,7 +368,7 @@ __eth_bond_slave_add_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
 }
 
 int
-rte_eth_bond_slave_add(uint8_t bonded_port_id, uint8_t slave_port_id)
+rte_eth_bond_slave_add(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
 	struct rte_eth_dev *bonded_eth_dev;
 	struct bond_dev_private *internals;
@@ -395,18 +392,19 @@ rte_eth_bond_slave_add(uint8_t bonded_port_id, uint8_t slave_port_id)
 }
 
 static int
-__eth_bond_slave_remove_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
+__eth_bond_slave_remove_lock_free(uint16_t bonded_port_id,
+				   uint16_t slave_port_id)
 {
 	struct rte_eth_dev *bonded_eth_dev;
 	struct bond_dev_private *internals;
 	struct rte_eth_dev *slave_eth_dev;
 	int i, slave_idx;
 
-	if (valid_slave_port_id(slave_port_id) != 0)
-		return -1;
-
 	bonded_eth_dev = &rte_eth_devices[bonded_port_id];
 	internals = bonded_eth_dev->data->dev_private;
+
+	if (valid_slave_port_id(slave_port_id, internals->mode) < 0)
+		return -1;
 
 	/* first remove from active slave list */
 	slave_idx = find_slave_by_id(internals->active_slaves,
@@ -455,9 +453,6 @@ __eth_bond_slave_remove_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
 	}
 
 	if (internals->active_slave_count < 1) {
-		/* reset device link properties as no slaves are active */
-		link_properties_reset(&rte_eth_devices[bonded_port_id]);
-
 		/* if no slaves are any longer attached to bonded device and MAC is not
 		 * user defined then clear MAC of bonded device as it will be reset
 		 * when a new slave is added */
@@ -477,7 +472,7 @@ __eth_bond_slave_remove_lock_free(uint8_t bonded_port_id, uint8_t slave_port_id)
 }
 
 int
-rte_eth_bond_slave_remove(uint8_t bonded_port_id, uint8_t slave_port_id)
+rte_eth_bond_slave_remove(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
 	struct rte_eth_dev *bonded_eth_dev;
 	struct bond_dev_private *internals;
@@ -499,7 +494,7 @@ rte_eth_bond_slave_remove(uint8_t bonded_port_id, uint8_t slave_port_id)
 }
 
 int
-rte_eth_bond_mode_set(uint8_t bonded_port_id, uint8_t mode)
+rte_eth_bond_mode_set(uint16_t bonded_port_id, uint8_t mode)
 {
 	if (valid_bonded_port_id(bonded_port_id) != 0)
 		return -1;
@@ -508,7 +503,7 @@ rte_eth_bond_mode_set(uint8_t bonded_port_id, uint8_t mode)
 }
 
 int
-rte_eth_bond_mode_get(uint8_t bonded_port_id)
+rte_eth_bond_mode_get(uint16_t bonded_port_id)
 {
 	struct bond_dev_private *internals;
 
@@ -521,17 +516,17 @@ rte_eth_bond_mode_get(uint8_t bonded_port_id)
 }
 
 int
-rte_eth_bond_primary_set(uint8_t bonded_port_id, uint8_t slave_port_id)
+rte_eth_bond_primary_set(uint16_t bonded_port_id, uint16_t slave_port_id)
 {
 	struct bond_dev_private *internals;
 
 	if (valid_bonded_port_id(bonded_port_id) != 0)
 		return -1;
 
-	if (valid_slave_port_id(slave_port_id) != 0)
-		return -1;
+	internals = rte_eth_devices[bonded_port_id].data->dev_private;
 
-	internals =  rte_eth_devices[bonded_port_id].data->dev_private;
+	if (valid_slave_port_id(slave_port_id, internals->mode) != 0)
+		return -1;
 
 	internals->user_defined_primary_port = 1;
 	internals->primary_port = slave_port_id;
@@ -542,7 +537,7 @@ rte_eth_bond_primary_set(uint8_t bonded_port_id, uint8_t slave_port_id)
 }
 
 int
-rte_eth_bond_primary_get(uint8_t bonded_port_id)
+rte_eth_bond_primary_get(uint16_t bonded_port_id)
 {
 	struct bond_dev_private *internals;
 
@@ -558,7 +553,8 @@ rte_eth_bond_primary_get(uint8_t bonded_port_id)
 }
 
 int
-rte_eth_bond_slaves_get(uint8_t bonded_port_id, uint8_t slaves[], uint8_t len)
+rte_eth_bond_slaves_get(uint16_t bonded_port_id, uint16_t slaves[],
+			uint16_t len)
 {
 	struct bond_dev_private *internals;
 	uint8_t i;
@@ -581,8 +577,8 @@ rte_eth_bond_slaves_get(uint8_t bonded_port_id, uint8_t slaves[], uint8_t len)
 }
 
 int
-rte_eth_bond_active_slaves_get(uint8_t bonded_port_id, uint8_t slaves[],
-		uint8_t len)
+rte_eth_bond_active_slaves_get(uint16_t bonded_port_id, uint16_t slaves[],
+		uint16_t len)
 {
 	struct bond_dev_private *internals;
 
@@ -597,13 +593,14 @@ rte_eth_bond_active_slaves_get(uint8_t bonded_port_id, uint8_t slaves[],
 	if (internals->active_slave_count > len)
 		return -1;
 
-	memcpy(slaves, internals->active_slaves, internals->active_slave_count);
+	memcpy(slaves, internals->active_slaves,
+	internals->active_slave_count * sizeof(internals->active_slaves[0]));
 
 	return internals->active_slave_count;
 }
 
 int
-rte_eth_bond_mac_address_set(uint8_t bonded_port_id,
+rte_eth_bond_mac_address_set(uint16_t bonded_port_id,
 		struct ether_addr *mac_addr)
 {
 	struct rte_eth_dev *bonded_eth_dev;
@@ -629,7 +626,7 @@ rte_eth_bond_mac_address_set(uint8_t bonded_port_id,
 }
 
 int
-rte_eth_bond_mac_address_reset(uint8_t bonded_port_id)
+rte_eth_bond_mac_address_reset(uint16_t bonded_port_id)
 {
 	struct rte_eth_dev *bonded_eth_dev;
 	struct bond_dev_private *internals;
@@ -658,7 +655,7 @@ rte_eth_bond_mac_address_reset(uint8_t bonded_port_id)
 }
 
 int
-rte_eth_bond_xmit_policy_set(uint8_t bonded_port_id, uint8_t policy)
+rte_eth_bond_xmit_policy_set(uint16_t bonded_port_id, uint8_t policy)
 {
 	struct bond_dev_private *internals;
 
@@ -688,7 +685,7 @@ rte_eth_bond_xmit_policy_set(uint8_t bonded_port_id, uint8_t policy)
 }
 
 int
-rte_eth_bond_xmit_policy_get(uint8_t bonded_port_id)
+rte_eth_bond_xmit_policy_get(uint16_t bonded_port_id)
 {
 	struct bond_dev_private *internals;
 
@@ -701,7 +698,7 @@ rte_eth_bond_xmit_policy_get(uint8_t bonded_port_id)
 }
 
 int
-rte_eth_bond_link_monitoring_set(uint8_t bonded_port_id, uint32_t internal_ms)
+rte_eth_bond_link_monitoring_set(uint16_t bonded_port_id, uint32_t internal_ms)
 {
 	struct bond_dev_private *internals;
 
@@ -715,7 +712,7 @@ rte_eth_bond_link_monitoring_set(uint8_t bonded_port_id, uint32_t internal_ms)
 }
 
 int
-rte_eth_bond_link_monitoring_get(uint8_t bonded_port_id)
+rte_eth_bond_link_monitoring_get(uint16_t bonded_port_id)
 {
 	struct bond_dev_private *internals;
 
@@ -728,7 +725,8 @@ rte_eth_bond_link_monitoring_get(uint8_t bonded_port_id)
 }
 
 int
-rte_eth_bond_link_down_prop_delay_set(uint8_t bonded_port_id, uint32_t delay_ms)
+rte_eth_bond_link_down_prop_delay_set(uint16_t bonded_port_id,
+				       uint32_t delay_ms)
 
 {
 	struct bond_dev_private *internals;
@@ -743,7 +741,7 @@ rte_eth_bond_link_down_prop_delay_set(uint8_t bonded_port_id, uint32_t delay_ms)
 }
 
 int
-rte_eth_bond_link_down_prop_delay_get(uint8_t bonded_port_id)
+rte_eth_bond_link_down_prop_delay_get(uint16_t bonded_port_id)
 {
 	struct bond_dev_private *internals;
 
@@ -756,7 +754,7 @@ rte_eth_bond_link_down_prop_delay_get(uint8_t bonded_port_id)
 }
 
 int
-rte_eth_bond_link_up_prop_delay_set(uint8_t bonded_port_id, uint32_t delay_ms)
+rte_eth_bond_link_up_prop_delay_set(uint16_t bonded_port_id, uint32_t delay_ms)
 
 {
 	struct bond_dev_private *internals;
@@ -771,7 +769,7 @@ rte_eth_bond_link_up_prop_delay_set(uint8_t bonded_port_id, uint32_t delay_ms)
 }
 
 int
-rte_eth_bond_link_up_prop_delay_get(uint8_t bonded_port_id)
+rte_eth_bond_link_up_prop_delay_get(uint16_t bonded_port_id)
 {
 	struct bond_dev_private *internals;
 

@@ -43,13 +43,15 @@ DIRS-$(CONFIG_RTE_LIBRTE_DISTRIBUTOR) += distributor
 DIRS-y += ethtool
 DIRS-y += exception_path
 DIRS-$(CONFIG_RTE_LIBRTE_EFD) += server_node_efd
+DIRS-$(CONFIG_RTE_LIBRTE_FLOW_CLASSIFY) += flow_classify
+DIRS-y += flow_filtering
 DIRS-y += helloworld
 DIRS-$(CONFIG_RTE_LIBRTE_PIPELINE) += ip_pipeline
 ifeq ($(CONFIG_RTE_LIBRTE_LPM),y)
 DIRS-$(CONFIG_RTE_IP_FRAG) += ip_reassembly
 DIRS-$(CONFIG_RTE_IP_FRAG) += ip_fragmentation
 endif
-ifeq ($(CONFIG_RTE_LIBRTE_ACL)$(CONFIG_RTE_LIBRTE_HASH)$(CONFIG_RTE_LIBRTE_LPM),yyy)
+ifeq ($(CONFIG_RTE_LIBRTE_ACL)$(CONFIG_RTE_LIBRTE_HASH)$(CONFIG_RTE_LIBRTE_LPM)$(CONFIG_RTE_LIBRTE_SECURITY),yyyy)
 DIRS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += ipsec-secgw
 endif
 DIRS-$(CONFIG_RTE_LIBRTE_HASH) += ipv4_multicast
@@ -83,13 +85,13 @@ DIRS-$(CONFIG_RTE_LIBRTE_METER) += qos_meter
 DIRS-$(CONFIG_RTE_LIBRTE_SCHED) += qos_sched
 DIRS-y += quota_watermark
 DIRS-$(CONFIG_RTE_ETHDEV_RXTX_CALLBACKS) += rxtx_callbacks
+DIRS-y += service_cores
 DIRS-y += skeleton
 ifeq ($(CONFIG_RTE_LIBRTE_HASH),y)
 DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += tep_termination
 endif
 DIRS-$(CONFIG_RTE_LIBRTE_TIMER) += timer
-DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += vhost
-DIRS-$(CONFIG_RTE_LIBRTE_XEN_DOM0) += vhost_xen
+DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += vhost vhost_scsi
 DIRS-y += vmdq
 DIRS-y += vmdq_dcb
 ifeq ($(CONFIG_RTE_LIBRTE_POWER), y)
@@ -99,5 +101,7 @@ else
 $(info vm_power_manager requires libvirt >= 0.9.3)
 endif
 endif
+
+DIRS-y += eventdev_pipeline_sw_pmd
 
 include $(RTE_SDK)/mk/rte.extsubdir.mk

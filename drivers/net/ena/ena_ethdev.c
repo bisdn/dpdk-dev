@@ -205,7 +205,7 @@ static void ena_init_rings(struct ena_adapter *adapter);
 static int ena_mtu_set(struct rte_eth_dev *dev, uint16_t mtu);
 static int ena_start(struct rte_eth_dev *dev);
 static void ena_close(struct rte_eth_dev *dev);
-static void ena_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats);
+static int ena_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats);
 static void ena_rx_queue_release_all(struct rte_eth_dev *dev);
 static void ena_tx_queue_release_all(struct rte_eth_dev *dev);
 static void ena_rx_queue_release(void *queue);
@@ -689,11 +689,10 @@ static void ena_rx_queue_release_bufs(struct ena_ring *ring)
 
 static void ena_tx_queue_release_bufs(struct ena_ring *ring)
 {
-	unsigned int ring_mask = ring->ring_size - 1;
+	unsigned int i;
 
-	while (ring->next_to_clean != ring->next_to_use) {
-		struct ena_tx_buffer *tx_buf =
-			&ring->tx_buffer_info[ring->next_to_clean & ring_mask];
+	for (i = 0; i < ring->ring_size; ++i) {
+		struct ena_tx_buffer *tx_buf = &ring->tx_buffer_info[i];
 
 		if (tx_buf->mbuf)
 			rte_pktmbuf_free(tx_buf->mbuf);
@@ -812,7 +811,7 @@ static void ena_stats_restart(struct rte_eth_dev *dev)
 	rte_atomic64_init(&adapter->drv_stats->rx_nombuf);
 }
 
-static void ena_stats_get(struct rte_eth_dev *dev,
+static int ena_stats_get(struct rte_eth_dev *dev,
 			  struct rte_eth_stats *stats)
 {
 	struct ena_admin_basic_stats ena_stats;
@@ -822,13 +821,13 @@ static void ena_stats_get(struct rte_eth_dev *dev,
 	int rc;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
-		return;
+		return -ENOTSUP;
 
 	memset(&ena_stats, 0, sizeof(ena_stats));
 	rc = ena_com_get_dev_basic_stats(ena_dev, &ena_stats);
 	if (unlikely(rc)) {
 		RTE_LOG(ERR, PMD, "Could not retrieve statistics from ENA");
-		return;
+		return rc;
 	}
 
 	/* Set of basic statistics from ENA */
@@ -847,6 +846,7 @@ static void ena_stats_get(struct rte_eth_dev *dev,
 	stats->ierrors = rte_atomic64_read(&adapter->drv_stats->ierrors);
 	stats->oerrors = rte_atomic64_read(&adapter->drv_stats->oerrors);
 	stats->rx_nombuf = rte_atomic64_read(&adapter->drv_stats->rx_nombuf);
+	return 0;
 }
 
 static int ena_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
@@ -1167,7 +1167,7 @@ static int ena_populate_rx_queue(struct ena_ring *rxq, unsigned int count)
 
 		rte_prefetch0(mbufs[((next_to_use + 4) & ring_mask)]);
 		/* prepare physical address for DMA transaction */
-		ebuf.paddr = mbuf->buf_physaddr + RTE_PKTMBUF_HEADROOM;
+		ebuf.paddr = mbuf->buf_iova + RTE_PKTMBUF_HEADROOM;
 		ebuf.len = mbuf->buf_len - RTE_PKTMBUF_HEADROOM;
 		/* pass resource to device */
 		rc = ena_com_add_single_rx_desc(rxq->ena_com_io_sq,
@@ -1726,7 +1726,7 @@ static uint16_t eth_ena_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 		 * consideration pushed header
 		 */
 		if (mbuf->data_len > ena_tx_ctx.header_len) {
-			ebuf->paddr = mbuf->buf_physaddr +
+			ebuf->paddr = mbuf->buf_iova +
 				      mbuf->data_off +
 				      ena_tx_ctx.header_len;
 			ebuf->len = mbuf->data_len - ena_tx_ctx.header_len;
@@ -1735,7 +1735,7 @@ static uint16_t eth_ena_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 		}
 
 		while ((mbuf = mbuf->next) != NULL) {
-			ebuf->paddr = mbuf->buf_physaddr + mbuf->data_off;
+			ebuf->paddr = mbuf->buf_iova + mbuf->data_off;
 			ebuf->len = mbuf->data_len;
 			ebuf++;
 			tx_info->num_of_bufs++;
@@ -1772,6 +1772,7 @@ static uint16_t eth_ena_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 		/* Free whole mbuf chain  */
 		mbuf = tx_info->mbuf;
 		rte_pktmbuf_free(mbuf);
+		tx_info->mbuf = NULL;
 
 		/* Put back descriptor to the ring for reuse */
 		tx_ring->empty_tx_reqs[next_to_clean & ring_mask] = req_id;

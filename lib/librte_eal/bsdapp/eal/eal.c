@@ -45,20 +45,19 @@
 #include <stddef.h>
 #include <errno.h>
 #include <limits.h>
-#include <errno.h>
 #include <sys/mman.h>
 #include <sys/queue.h>
 
 #include <rte_common.h>
 #include <rte_debug.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_launch.h>
 #include <rte_eal.h>
 #include <rte_eal_memconfig.h>
 #include <rte_errno.h>
 #include <rte_per_lcore.h>
 #include <rte_lcore.h>
+#include <rte_service_component.h>
 #include <rte_log.h>
 #include <rte_random.h>
 #include <rte_cycles.h>
@@ -66,10 +65,8 @@
 #include <rte_cpuflags.h>
 #include <rte_interrupts.h>
 #include <rte_bus.h>
-#include <rte_pci.h>
 #include <rte_dev.h>
 #include <rte_devargs.h>
-#include <rte_common.h>
 #include <rte_version.h>
 #include <rte_atomic.h>
 #include <malloc_heap.h>
@@ -113,11 +110,24 @@ struct internal_config internal_config;
 /* used by rte_rdtsc() */
 int rte_cycles_vmware_tsc_map;
 
+/* Return mbuf pool ops name */
+const char *
+rte_eal_mbuf_default_mempool_ops(void)
+{
+	return internal_config.mbuf_pool_ops_name;
+}
+
 /* Return a pointer to the configuration structure */
 struct rte_config *
 rte_eal_get_configuration(void)
 {
 	return &rte_config;
+}
+
+enum rte_iova_mode
+rte_eal_iova_mode(void)
+{
+	return rte_eal_get_configuration()->iova_mode;
 }
 
 /* parse a sysfs (or other) file containing one integer value */
@@ -386,6 +396,9 @@ eal_parse_args(int argc, char **argv)
 			continue;
 
 		switch (opt) {
+		case OPT_MBUF_POOL_OPS_NAME_NUM:
+			internal_config.mbuf_pool_ops_name = optarg;
+			break;
 		case 'h':
 			eal_usage(prgname);
 			exit(EXIT_SUCCESS);
@@ -536,6 +549,29 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	if (eal_plugins_init() < 0) {
+		rte_eal_init_alert("Cannot init plugins\n");
+		rte_errno = EINVAL;
+		rte_atomic32_clear(&run_once);
+		return -1;
+	}
+
+	if (eal_option_device_parse()) {
+		rte_errno = ENODEV;
+		rte_atomic32_clear(&run_once);
+		return -1;
+	}
+
+	if (rte_bus_scan()) {
+		rte_eal_init_alert("Cannot scan the buses for devices\n");
+		rte_errno = ENODEV;
+		rte_atomic32_clear(&run_once);
+		return -1;
+	}
+
+	/* autodetect the iova mapping mode (default is iova_pa) */
+	rte_eal_get_configuration()->iova_mode = rte_bus_get_iommu_class();
+
 	if (internal_config.no_hugetlbfs == 0 &&
 			internal_config.process_type != RTE_PROC_SECONDARY &&
 			eal_hugepage_info_init() < 0) {
@@ -604,9 +640,6 @@ rte_eal_init(int argc, char **argv)
 
 	eal_check_mem_on_local_socket();
 
-	if (eal_plugins_init() < 0)
-		rte_eal_init_alert("Cannot init plugins\n");
-
 	eal_thread_init_master(rte_config.master_lcore);
 
 	ret = eal_thread_dump_affinity(cpuset, RTE_CPU_AFFINITY_STR_LEN);
@@ -614,12 +647,6 @@ rte_eal_init(int argc, char **argv)
 	RTE_LOG(DEBUG, EAL, "Master lcore %u is ready (tid=%p;cpuset=[%s%s])\n",
 		rte_config.master_lcore, thread_id, cpuset,
 		ret == 0 ? "" : "...");
-
-	if (rte_bus_scan()) {
-		rte_eal_init_alert("Cannot scan the buses for devices\n");
-		rte_errno = ENODEV;
-		return -1;
-	}
 
 	RTE_LCORE_FOREACH_SLAVE(i) {
 
@@ -653,10 +680,27 @@ rte_eal_init(int argc, char **argv)
 	rte_eal_mp_remote_launch(sync_func, NULL, SKIP_MASTER);
 	rte_eal_mp_wait_lcore();
 
+	/* initialize services so vdevs register service during bus_probe. */
+	ret = rte_service_init();
+	if (ret) {
+		rte_eal_init_alert("rte_service_init() failed\n");
+		rte_errno = ENOEXEC;
+		return -1;
+	}
+
 	/* Probe all the buses and devices/drivers on them */
 	if (rte_bus_probe()) {
 		rte_eal_init_alert("Cannot probe devices\n");
 		rte_errno = ENOTSUP;
+		return -1;
+	}
+
+	/* initialize default service/lcore mappings and start running. Ignore
+	 * -ENOTSUP, as it indicates no service coremask passed to EAL.
+	 */
+	ret = rte_service_start_with_defaults();
+	if (ret < 0 && ret != -ENOTSUP) {
+		rte_errno = ENOEXEC;
 		return -1;
 	}
 
@@ -676,4 +720,61 @@ enum rte_proc_type_t
 rte_eal_process_type(void)
 {
 	return rte_config.process_type;
+}
+
+int rte_eal_has_pci(void)
+{
+	return !internal_config.no_pci;
+}
+
+int rte_eal_create_uio_dev(void)
+{
+	return internal_config.create_uio_dev;
+}
+
+enum rte_intr_mode
+rte_eal_vfio_intr_mode(void)
+{
+	return RTE_INTR_MODE_NONE;
+}
+
+/* dummy forward declaration. */
+struct vfio_device_info;
+
+/* dummy prototypes. */
+int rte_vfio_setup_device(const char *sysfs_base, const char *dev_addr,
+		int *vfio_dev_fd, struct vfio_device_info *device_info);
+int rte_vfio_release_device(const char *sysfs_base, const char *dev_addr, int fd);
+int rte_vfio_enable(const char *modname);
+int rte_vfio_is_enabled(const char *modname);
+int rte_vfio_noiommu_is_enabled(void);
+
+int rte_vfio_setup_device(__rte_unused const char *sysfs_base,
+		      __rte_unused const char *dev_addr,
+		      __rte_unused int *vfio_dev_fd,
+		      __rte_unused struct vfio_device_info *device_info)
+{
+	return -1;
+}
+
+int rte_vfio_release_device(__rte_unused const char *sysfs_base,
+			__rte_unused const char *dev_addr,
+			__rte_unused int fd)
+{
+	return -1;
+}
+
+int rte_vfio_enable(__rte_unused const char *modname)
+{
+	return -1;
+}
+
+int rte_vfio_is_enabled(__rte_unused const char *modname)
+{
+	return 0;
+}
+
+int rte_vfio_noiommu_is_enabled(void)
+{
+	return 0;
 }

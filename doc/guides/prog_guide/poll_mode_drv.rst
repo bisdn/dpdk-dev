@@ -84,7 +84,7 @@ Whenever needed and appropriate, asynchronous communication should be introduced
 
 Avoiding lock contention is a key issue in a multi-core environment.
 To address this issue, PMDs are designed to work with per-core private resources as much as possible.
-For example, a PMD maintains a separate transmit queue per-core, per-port.
+For example, a PMD maintains a separate transmit queue per-core, per-port, if the PMD is not ``DEV_TX_OFFLOAD_MT_LOCKFREE`` capable.
 In the same way, every receive queue of a port is assigned to and polled by a single logical core (lcore).
 
 To comply with Non-Uniform Memory Access (NUMA), memory management is designed to assign to each logical core
@@ -145,6 +145,16 @@ The run-to-completion model also performs better if packet or data manipulation 
 This is also true for the pipe-line model provided all logical cores used are located on the same processor.
 
 Multiple logical cores should never share receive or transmit queues for interfaces since this would require global locks and hinder performance.
+
+If the PMD is ``DEV_TX_OFFLOAD_MT_LOCKFREE`` capable, multiple threads can invoke ``rte_eth_tx_burst()``
+concurrently on the same tx queue without SW lock. This PMD feature found in some NICs and useful in the following use cases:
+
+*  Remove explicit spinlock in some applications where lcores are not mapped to Tx queues with 1:1 relation.
+
+*  In the eventdev use case, avoid dedicating a separate TX core for transmitting and thus
+   enables more scaling as all workers can send the packets.
+
+See `Hardware Offload`_ for ``DEV_TX_OFFLOAD_MT_LOCKFREE`` capability probing details.
 
 Device Identification and Configuration
 ---------------------------------------
@@ -290,7 +300,8 @@ Hardware Offload
 
 Depending on driver capabilities advertised by
 ``rte_eth_dev_info_get()``, the PMD may support hardware offloading
-feature like checksumming, TCP segmentation or VLAN insertion.
+feature like checksumming, TCP segmentation, VLAN insertion or
+lockfree multithreaded TX burst on the same TX queue.
 
 The support of these offload features implies the addition of dedicated
 status bit(s) and value field(s) into the rte_mbuf data structure, along
@@ -298,6 +309,26 @@ with their appropriate handling by the receive/transmit functions
 exported by each PMD. The list of flags and their precise meaning is
 described in the mbuf API documentation and in the in :ref:`Mbuf Library
 <Mbuf_Library>`, section "Meta Information".
+
+Per-Port and Per-Queue Offloads
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In the DPDK offload API, offloads are divided into per-port and per-queue offloads.
+The different offloads capabilities can be queried using ``rte_eth_dev_info_get()``.
+Supported offloads can be either per-port or per-queue.
+
+Offloads are enabled using the existing ``DEV_TX_OFFLOAD_*`` or ``DEV_RX_OFFLOAD_*`` flags.
+Per-port offload configuration is set using ``rte_eth_dev_configure``.
+Per-queue offload configuration is set using ``rte_eth_rx_queue_setup`` and ``rte_eth_tx_queue_setup``.
+To enable per-port offload, the offload should be set on both device configuration and queue setup.
+In case of a mixed configuration the queue setup shall return with an error.
+To enable per-queue offload, the offload can be set only on the queue setup.
+Offloads which are not enabled are disabled by default.
+
+For an application to use the Tx offloads API it should set the ``ETH_TXQ_FLAGS_IGNORE`` flag in the ``txq_flags`` field located in ``rte_eth_txconf`` struct.
+In such cases it is not required to set other flags in ``txq_flags``.
+For an application to use the Rx offloads API it should set the ``ignore_offload_bitfield`` bit in the ``rte_eth_rxmode`` struct.
+In such cases it is not required to set other bitfield offloads in the ``rxmode`` struct.
 
 Poll Mode Driver API
 --------------------
@@ -525,3 +556,43 @@ call. As an end result, the application is able to achieve its goal of
 monitoring a single statistic ("rx_errors" in this case), and if that shows
 packets being dropped, it can easily retrieve a "set" of statistics using the
 IDs array parameter to ``rte_eth_xstats_get_by_id`` function.
+
+NIC Reset API
+~~~~~~~~~~~~~
+
+.. code-block:: c
+
+    int rte_eth_dev_reset(uint16_t port_id);
+
+Sometimes a port has to be reset passively. For example when a PF is
+reset, all its VFs should also be reset by the application to make them
+consistent with the PF. A DPDK application also can call this function
+to trigger a port reset. Normally, a DPDK application would invokes this
+function when an RTE_ETH_EVENT_INTR_RESET event is detected.
+
+It is the duty of the PMD to trigger RTE_ETH_EVENT_INTR_RESET events and
+the application should register a callback function to handle these
+events. When a PMD needs to trigger a reset, it can trigger an
+RTE_ETH_EVENT_INTR_RESET event. On receiving an RTE_ETH_EVENT_INTR_RESET
+event, applications can handle it as follows: Stop working queues, stop
+calling Rx and Tx functions, and then call rte_eth_dev_reset(). For
+thread safety all these operations should be called from the same thread.
+
+For example when PF is reset, the PF sends a message to notify VFs of
+this event and also trigger an interrupt to VFs. Then in the interrupt
+service routine the VFs detects this notification message and calls
+_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_RESET, NULL,
+NULL). This means that a PF reset triggers an RTE_ETH_EVENT_INTR_RESET
+event within VFs. The function _rte_eth_dev_callback_process() will
+call the registered callback function. The callback function can trigger
+the application to handle all operations the VF reset requires including
+stopping Rx/Tx queues and calling rte_eth_dev_reset().
+
+The rte_eth_dev_reset() itself is a generic function which only does
+some hardware reset operations through calling dev_unint() and
+dev_init(), and itself does not handle synchronization, which is handled
+by application.
+
+The PMD itself should not call rte_eth_dev_reset(). The PMD can trigger
+the application to handle reset event. It is duty of application to
+handle all synchronization before it calls rte_eth_dev_reset().

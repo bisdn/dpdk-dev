@@ -53,6 +53,8 @@
 #define BLOCKCIPHER_TEST_TARGET_PMD_ARMV8	0x0008 /* ARMv8 flag */
 #define BLOCKCIPHER_TEST_TARGET_PMD_SCHEDULER	0x0010 /* Scheduler */
 #define BLOCKCIPHER_TEST_TARGET_PMD_DPAA2_SEC	0x0020 /* DPAA2_SEC flag */
+#define BLOCKCIPHER_TEST_TARGET_PMD_DPAA_SEC	0x0040 /* DPAA_SEC flag */
+#define BLOCKCIPHER_TEST_TARGET_PMD_MRVL	0x0080 /* Marvell flag */
 
 #define BLOCKCIPHER_TEST_OP_CIPHER	(BLOCKCIPHER_TEST_OP_ENCRYPT | \
 					BLOCKCIPHER_TEST_OP_DECRYPT)
@@ -125,8 +127,9 @@ struct blockcipher_test_data {
 int
 test_blockcipher_all_tests(struct rte_mempool *mbuf_pool,
 	struct rte_mempool *op_mpool,
+	struct rte_mempool *sess_mpool,
 	uint8_t dev_id,
-	enum rte_cryptodev_type cryptodev_type,
+	int driver_id,
 	enum blockcipher_test_type test_type);
 
 #endif /* TEST_CRYPTODEV_BLOCKCIPHER_H_ */

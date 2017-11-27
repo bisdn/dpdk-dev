@@ -48,9 +48,12 @@ int bnxt_hwrm_cfa_l2_clear_rx_mask(struct bnxt *bp,
 int bnxt_hwrm_cfa_l2_set_rx_mask(struct bnxt *bp, struct bnxt_vnic_info *vnic,
 				 uint16_t vlan_count,
 				 struct bnxt_vlan_table_entry *vlan_table);
-int bnxt_hwrm_clear_filter(struct bnxt *bp,
+int bnxt_hwrm_cfa_vlan_antispoof_cfg(struct bnxt *bp, uint16_t fid,
+			uint16_t vlan_count,
+			struct bnxt_vlan_antispoof_table_entry *vlan_table);
+int bnxt_hwrm_clear_l2_filter(struct bnxt *bp,
 			   struct bnxt_filter_info *filter);
-int bnxt_hwrm_set_filter(struct bnxt *bp,
+int bnxt_hwrm_set_l2_filter(struct bnxt *bp,
 			 uint16_t dst_id,
 			 struct bnxt_filter_info *filter);
 int bnxt_hwrm_exec_fwd_resp(struct bnxt *bp, uint16_t target_id,
@@ -89,7 +92,7 @@ int bnxt_hwrm_stat_ctx_alloc(struct bnxt *bp,
 int bnxt_hwrm_stat_ctx_free(struct bnxt *bp,
 			    struct bnxt_cp_ring_info *cpr, unsigned int idx);
 int bnxt_hwrm_ctx_qstats(struct bnxt *bp, uint32_t cid, int idx,
-			 struct rte_eth_stats *stats);
+			 struct rte_eth_stats *stats, uint8_t rx);
 
 int bnxt_hwrm_ver_get(struct bnxt *bp);
 
@@ -142,14 +145,34 @@ int bnxt_hwrm_port_qstats(struct bnxt *bp);
 int bnxt_hwrm_port_clr_stats(struct bnxt *bp);
 int bnxt_hwrm_port_led_cfg(struct bnxt *bp, bool led_on);
 int bnxt_hwrm_port_led_qcaps(struct bnxt *bp);
-int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf);
+int bnxt_hwrm_func_cfg_vf_set_flags(struct bnxt *bp, uint16_t vf,
+					uint32_t flags);
 void vf_vnic_set_rxmask_cb(struct bnxt_vnic_info *vnic, void *flagp);
 int bnxt_set_rx_mask_no_vlan(struct bnxt *bp, struct bnxt_vnic_info *vnic);
-int bnxt_vf_default_vnic_count(struct bnxt *bp, uint16_t vf);
+int bnxt_vf_vnic_count(struct bnxt *bp, uint16_t vf);
 int bnxt_hwrm_func_vf_vnic_query_and_config(struct bnxt *bp, uint16_t vf,
 	void (*vnic_cb)(struct bnxt_vnic_info *, void *), void *cbdata,
 	int (*hwrm_cb)(struct bnxt *bp, struct bnxt_vnic_info *vnic));
 int bnxt_hwrm_func_cfg_vf_set_vlan_anti_spoof(struct bnxt *bp, uint16_t vf,
 					      bool on);
 int bnxt_hwrm_func_qcfg_vf_dflt_vnic_id(struct bnxt *bp, int vf);
+int bnxt_hwrm_set_em_filter(struct bnxt *bp, uint16_t dst_id,
+			struct bnxt_filter_info *filter);
+int bnxt_hwrm_clear_em_filter(struct bnxt *bp, struct bnxt_filter_info *filter);
+
+int bnxt_hwrm_set_ntuple_filter(struct bnxt *bp, uint16_t dst_id,
+			 struct bnxt_filter_info *filter);
+int bnxt_hwrm_clear_ntuple_filter(struct bnxt *bp,
+				struct bnxt_filter_info *filter);
+int bnxt_get_nvram_directory(struct bnxt *bp, uint32_t len, uint8_t *data);
+int bnxt_hwrm_nvm_get_dir_info(struct bnxt *bp, uint32_t *entries,
+			       uint32_t *length);
+int bnxt_hwrm_get_nvram_item(struct bnxt *bp, uint32_t index,
+			     uint32_t offset, uint32_t length,
+			     uint8_t *data);
+int bnxt_hwrm_erase_nvram_directory(struct bnxt *bp, uint8_t index);
+int bnxt_hwrm_flash_nvram(struct bnxt *bp, uint16_t dir_type,
+			  uint16_t dir_ordinal, uint16_t dir_ext,
+			  uint16_t dir_attr, const uint8_t *data,
+			  size_t data_len);
 #endif

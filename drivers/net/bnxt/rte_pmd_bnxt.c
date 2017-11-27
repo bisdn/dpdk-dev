@@ -50,23 +50,24 @@
 
 int bnxt_rcv_msg_from_vf(struct bnxt *bp, uint16_t vf_id, void *msg)
 {
-	struct rte_pmd_bnxt_mb_event_param cb_param;
+	struct rte_pmd_bnxt_mb_event_param ret_param;
 
-	cb_param.retval = RTE_PMD_BNXT_MB_EVENT_PROCEED;
-	cb_param.vf_id = vf_id;
-	cb_param.msg = msg;
+	ret_param.retval = RTE_PMD_BNXT_MB_EVENT_PROCEED;
+	ret_param.vf_id = vf_id;
+	ret_param.msg = msg;
 
 	_rte_eth_dev_callback_process(bp->eth_dev, RTE_ETH_EVENT_VF_MBOX,
-			&cb_param);
+				      NULL, &ret_param);
 
 	/* Default to approve */
-	if (cb_param.retval == RTE_PMD_BNXT_MB_EVENT_PROCEED)
-		cb_param.retval = RTE_PMD_BNXT_MB_EVENT_NOOP_ACK;
+	if (ret_param.retval == RTE_PMD_BNXT_MB_EVENT_PROCEED)
+		ret_param.retval = RTE_PMD_BNXT_MB_EVENT_NOOP_ACK;
 
-	return cb_param.retval == RTE_PMD_BNXT_MB_EVENT_NOOP_ACK ? true : false;
+	return ret_param.retval == RTE_PMD_BNXT_MB_EVENT_NOOP_ACK ?
+		true : false;
 }
 
-int rte_pmd_bnxt_set_tx_loopback(uint8_t port, uint8_t on)
+int rte_pmd_bnxt_set_tx_loopback(uint16_t port, uint8_t on)
 {
 	struct rte_eth_dev *eth_dev;
 	struct bnxt *bp;
@@ -107,12 +108,12 @@ rte_pmd_bnxt_set_all_queues_drop_en_cb(struct bnxt_vnic_info *vnic, void *onptr)
 	vnic->bd_stall = !(*on);
 }
 
-int rte_pmd_bnxt_set_all_queues_drop_en(uint8_t port, uint8_t on)
+int rte_pmd_bnxt_set_all_queues_drop_en(uint16_t port, uint8_t on)
 {
 	struct rte_eth_dev *eth_dev;
 	struct bnxt *bp;
 	uint32_t i;
-	int rc;
+	int rc = -EINVAL;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
 
@@ -158,7 +159,7 @@ int rte_pmd_bnxt_set_all_queues_drop_en(uint8_t port, uint8_t on)
 	return rc;
 }
 
-int rte_pmd_bnxt_set_vf_mac_addr(uint8_t port, uint16_t vf,
+int rte_pmd_bnxt_set_vf_mac_addr(uint16_t port, uint16_t vf,
 				struct ether_addr *mac_addr)
 {
 	struct rte_eth_dev *dev;
@@ -190,7 +191,7 @@ int rte_pmd_bnxt_set_vf_mac_addr(uint8_t port, uint16_t vf,
 	return rc;
 }
 
-int rte_pmd_bnxt_set_vf_rate_limit(uint8_t port, uint16_t vf,
+int rte_pmd_bnxt_set_vf_rate_limit(uint16_t port, uint16_t vf,
 				uint16_t tx_rate, uint64_t q_msk)
 {
 	struct rte_eth_dev *eth_dev;
@@ -240,7 +241,7 @@ int rte_pmd_bnxt_set_vf_rate_limit(uint8_t port, uint16_t vf,
 	return rc;
 }
 
-int rte_pmd_bnxt_set_vf_mac_anti_spoof(uint8_t port, uint16_t vf, uint8_t on)
+int rte_pmd_bnxt_set_vf_mac_anti_spoof(uint16_t port, uint16_t vf, uint8_t on)
 {
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev;
@@ -274,6 +275,8 @@ int rte_pmd_bnxt_set_vf_mac_anti_spoof(uint8_t port, uint16_t vf, uint8_t on)
 		return 0;
 
 	func_flags = bp->pf.vf_info[vf].func_cfg_flags;
+	func_flags &= ~(HWRM_FUNC_CFG_INPUT_FLAGS_SRC_MAC_ADDR_CHECK_ENABLE |
+	    HWRM_FUNC_CFG_INPUT_FLAGS_SRC_MAC_ADDR_CHECK_DISABLE);
 
 	if (on)
 		func_flags |=
@@ -282,23 +285,21 @@ int rte_pmd_bnxt_set_vf_mac_anti_spoof(uint8_t port, uint16_t vf, uint8_t on)
 		func_flags |=
 			HWRM_FUNC_CFG_INPUT_FLAGS_SRC_MAC_ADDR_CHECK_DISABLE;
 
-	bp->pf.vf_info[vf].func_cfg_flags = func_flags;
-
-	rc = bnxt_hwrm_func_cfg_vf_set_flags(bp, vf);
-	if (!rc)
+	rc = bnxt_hwrm_func_cfg_vf_set_flags(bp, vf, func_flags);
+	if (!rc) {
 		bp->pf.vf_info[vf].mac_spoof_en = on;
+		bp->pf.vf_info[vf].func_cfg_flags = func_flags;
+	}
 
 	return rc;
 }
 
-int rte_pmd_bnxt_set_vf_vlan_anti_spoof(uint8_t port, uint16_t vf, uint8_t on)
+int rte_pmd_bnxt_set_vf_vlan_anti_spoof(uint16_t port, uint16_t vf, uint8_t on)
 {
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_dev *dev;
 	struct bnxt *bp;
 	int rc;
-	int dflt_vnic;
-	struct bnxt_vnic_info vnic;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
 
@@ -314,7 +315,7 @@ int rte_pmd_bnxt_set_vf_vlan_anti_spoof(uint8_t port, uint16_t vf, uint8_t on)
 
 	if (!BNXT_PF(bp)) {
 		RTE_LOG(ERR, PMD,
-			"Attempt to set mac spoof on non-PF port %d!\n", port);
+			"Attempt to set VLAN spoof on non-PF port %d!\n", port);
 		return -EINVAL;
 	}
 
@@ -325,25 +326,11 @@ int rte_pmd_bnxt_set_vf_vlan_anti_spoof(uint8_t port, uint16_t vf, uint8_t on)
 	if (!rc) {
 		bp->pf.vf_info[vf].vlan_spoof_en = on;
 		if (on) {
-			dflt_vnic = bnxt_hwrm_func_qcfg_vf_dflt_vnic_id(bp, vf);
-			if (dflt_vnic < 0) {
-				/*
-				 * This simply indicates there's no driver
-				 * loaded.  This is not an error.
-				 */
-				RTE_LOG(ERR, PMD,
-				      "Unable to get default VNIC for VF %d\n",
-					vf);
-			} else {
-				vnic.fw_vnic_id = dflt_vnic;
-				if (bnxt_hwrm_vnic_qcfg(bp,
-					&vnic, bp->pf.first_vf_id + vf) == 0) {
-					if (bnxt_hwrm_cfa_l2_set_rx_mask(bp,
-					   &vnic, bp->pf.vf_info[vf].vlan_count,
-					   bp->pf.vf_info[vf].vlan_table))
-						rc = -1;
-				}
-			}
+			if (bnxt_hwrm_cfa_vlan_antispoof_cfg(bp,
+				bp->pf.first_vf_id + vf,
+				bp->pf.vf_info[vf].vlan_count,
+				bp->pf.vf_info[vf].vlan_as_table))
+				rc = -1;
 		}
 	} else {
 		RTE_LOG(ERR, PMD, "Failed to update VF VNIC %d.\n", vf);
@@ -360,7 +347,7 @@ rte_pmd_bnxt_set_vf_vlan_stripq_cb(struct bnxt_vnic_info *vnic, void *onptr)
 }
 
 int
-rte_pmd_bnxt_set_vf_vlan_stripq(uint8_t port, uint16_t vf, uint8_t on)
+rte_pmd_bnxt_set_vf_vlan_stripq(uint16_t port, uint16_t vf, uint8_t on)
 {
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
@@ -395,7 +382,7 @@ rte_pmd_bnxt_set_vf_vlan_stripq(uint8_t port, uint16_t vf, uint8_t on)
 	return rc;
 }
 
-int rte_pmd_bnxt_set_vf_rxmode(uint8_t port, uint16_t vf,
+int rte_pmd_bnxt_set_vf_rxmode(uint16_t port, uint16_t vf,
 				uint16_t rx_mask, uint8_t on)
 {
 	struct rte_eth_dev *dev;
@@ -419,20 +406,19 @@ int rte_pmd_bnxt_set_vf_rxmode(uint8_t port, uint16_t vf,
 	if (vf >= bp->pdev->max_vfs)
 		return -EINVAL;
 
-	if (rx_mask & (ETH_VMDQ_ACCEPT_UNTAG | ETH_VMDQ_ACCEPT_HASH_MC)) {
+	if (rx_mask & ETH_VMDQ_ACCEPT_UNTAG) {
 		RTE_LOG(ERR, PMD, "Currently cannot toggle this setting\n");
 		return -ENOTSUP;
 	}
 
-	if (rx_mask & ETH_VMDQ_ACCEPT_HASH_UC && !on) {
-		RTE_LOG(ERR, PMD, "Currently cannot disable UC Rx\n");
-		return -ENOTSUP;
-	}
+	/* Is this really the correct mapping?  VFd seems to think it is. */
+	if (rx_mask & ETH_VMDQ_ACCEPT_HASH_UC)
+		flag |= BNXT_VNIC_INFO_PROMISC;
 
 	if (rx_mask & ETH_VMDQ_ACCEPT_BROADCAST)
 		flag |= BNXT_VNIC_INFO_BCAST;
 	if (rx_mask & ETH_VMDQ_ACCEPT_MULTICAST)
-		flag |= BNXT_VNIC_INFO_ALLMULTI;
+		flag |= BNXT_VNIC_INFO_ALLMULTI | BNXT_VNIC_INFO_MCAST;
 
 	if (on)
 		bp->pf.vf_info[vf].l2_rx_mask |= flag;
@@ -449,10 +435,49 @@ int rte_pmd_bnxt_set_vf_rxmode(uint8_t port, uint16_t vf,
 	return rc;
 }
 
-int rte_pmd_bnxt_set_vf_vlan_filter(uint8_t port, uint16_t vlan,
+static int bnxt_set_vf_table(struct bnxt *bp, uint16_t vf)
+{
+	int rc = 0;
+	int dflt_vnic;
+	struct bnxt_vnic_info vnic;
+
+	if (!BNXT_PF(bp)) {
+		RTE_LOG(ERR, PMD,
+			"Attempt to set VLAN table on non-PF port!\n");
+		return -EINVAL;
+	}
+
+	if (vf >= bp->pdev->max_vfs)
+		return -EINVAL;
+
+	dflt_vnic = bnxt_hwrm_func_qcfg_vf_dflt_vnic_id(bp, vf);
+	if (dflt_vnic < 0) {
+		/* This simply indicates there's no driver loaded.
+		 * This is not an error.
+		 */
+		RTE_LOG(ERR, PMD, "Unable to get default VNIC for VF %d\n", vf);
+	} else {
+		memset(&vnic, 0, sizeof(vnic));
+		vnic.fw_vnic_id = dflt_vnic;
+		if (bnxt_hwrm_vnic_qcfg(bp, &vnic,
+					bp->pf.first_vf_id + vf) == 0) {
+			if (bnxt_hwrm_cfa_l2_set_rx_mask(bp, &vnic,
+						bp->pf.vf_info[vf].vlan_count,
+						bp->pf.vf_info[vf].vlan_table))
+				rc = -1;
+		} else {
+			rc = -1;
+		}
+	}
+
+	return rc;
+}
+
+int rte_pmd_bnxt_set_vf_vlan_filter(uint16_t port, uint16_t vlan,
 				    uint64_t vf_mask, uint8_t vlan_on)
 {
 	struct bnxt_vlan_table_entry *ve;
+	struct bnxt_vlan_antispoof_table_entry *vase;
 	struct rte_eth_dev *dev;
 	struct bnxt *bp;
 	uint16_t cnt;
@@ -471,68 +496,77 @@ int rte_pmd_bnxt_set_vf_vlan_filter(uint8_t port, uint16_t vlan,
 
 	for (i = 0; vf_mask; i++, vf_mask >>= 1) {
 		cnt = bp->pf.vf_info[i].vlan_count;
-		if (vf_mask & 1) {
-			if (bp->pf.vf_info[i].vlan_table == NULL) {
-				rc = -1;
-				continue;
-			}
-			if (vlan_on) {
-				/* First, search for a duplicate... */
-				for (j = 0; j < cnt; j++) {
-					if (rte_be_to_cpu_16(
-					 bp->pf.vf_info[i].vlan_table[j].vid) ==
-					    vlan)
-						break;
-				}
-				if (j == cnt) {
-					/* Now check that there's space */
-					if (cnt == getpagesize() /
-					 sizeof(struct bnxt_vlan_table_entry)) {
-						RTE_LOG(ERR, PMD,
-						  "VF %d VLAN table is full\n",
-						  i);
-						RTE_LOG(ERR, PMD,
-							"cannot add VLAN %u\n",
-							vlan);
-						rc = -1;
-						continue;
-					}
+		if ((vf_mask & 1)  == 0)
+			continue;
 
-					cnt = bp->pf.vf_info[i].vlan_count++;
-					/*
-					 * And finally, add to the
-					 * end of the table
-					 */
-					ve = &bp->pf.vf_info[i].vlan_table[cnt];
-					/* TODO: Hardcoded TPID */
-					ve->tpid = rte_cpu_to_be_16(0x8100);
-					ve->vid = rte_cpu_to_be_16(vlan);
-				}
-			} else {
-				for (j = 0; cnt; j++) {
-					if (rte_be_to_cpu_16(
-					bp->pf.vf_info[i].vlan_table[j].vid) !=
-					    vlan)
-						continue;
-					memmove(
-					 &bp->pf.vf_info[i].vlan_table[j],
-					 &bp->pf.vf_info[i].vlan_table[j + 1],
-					 getpagesize() -
-					 ((j + 1) *
-					 sizeof(struct bnxt_vlan_table_entry)));
-					j--;
-					cnt = bp->pf.vf_info[i].vlan_count--;
-				}
-			}
-			rte_pmd_bnxt_set_vf_vlan_anti_spoof(dev->data->port_id,
-					 i, bp->pf.vf_info[i].vlan_spoof_en);
+		if (bp->pf.vf_info[i].vlan_table == NULL) {
+			rc = -1;
+			continue;
 		}
+		if (bp->pf.vf_info[i].vlan_as_table == NULL) {
+			rc = -1;
+			continue;
+		}
+		if (vlan_on) {
+			/* First, search for a duplicate... */
+			for (j = 0; j < cnt; j++) {
+				if (rte_be_to_cpu_16(
+				   bp->pf.vf_info[i].vlan_table[j].vid) == vlan)
+					break;
+			}
+			if (j == cnt) {
+				/* Now check that there's space */
+				if (cnt == getpagesize() / sizeof(struct
+				    bnxt_vlan_antispoof_table_entry)) {
+					RTE_LOG(ERR, PMD,
+					     "VLAN anti-spoof table is full\n");
+					RTE_LOG(ERR, PMD,
+						"VF %d cannot add VLAN %u\n",
+						i, vlan);
+					rc = -1;
+					continue;
+				}
+
+				/* cnt is one less than vlan_count */
+				cnt = bp->pf.vf_info[i].vlan_count++;
+				/*
+				 * And finally, add to the
+				 * end of the table
+				 */
+				vase = &bp->pf.vf_info[i].vlan_as_table[cnt];
+				// TODO: Hardcoded TPID
+				vase->tpid = rte_cpu_to_be_16(0x8100);
+				vase->vid = rte_cpu_to_be_16(vlan);
+				vase->mask = rte_cpu_to_be_16(0xfff);
+				ve = &bp->pf.vf_info[i].vlan_table[cnt];
+				/* TODO: Hardcoded TPID */
+				ve->tpid = rte_cpu_to_be_16(0x8100);
+				ve->vid = rte_cpu_to_be_16(vlan);
+			}
+		} else {
+			for (j = 0; j < cnt; j++) {
+				if (rte_be_to_cpu_16(
+				   bp->pf.vf_info[i].vlan_table[j].vid) != vlan)
+					continue;
+				memmove(&bp->pf.vf_info[i].vlan_table[j],
+					&bp->pf.vf_info[i].vlan_table[j + 1],
+					getpagesize() - ((j + 1) *
+					sizeof(struct bnxt_vlan_table_entry)));
+				memmove(&bp->pf.vf_info[i].vlan_as_table[j],
+					&bp->pf.vf_info[i].vlan_as_table[j + 1],
+					getpagesize() - ((j + 1) * sizeof(struct
+					bnxt_vlan_antispoof_table_entry)));
+				j--;
+				cnt = --bp->pf.vf_info[i].vlan_count;
+			}
+		}
+		bnxt_set_vf_table(bp, i);
 	}
 
 	return rc;
 }
 
-int rte_pmd_bnxt_get_vf_stats(uint8_t port,
+int rte_pmd_bnxt_get_vf_stats(uint16_t port,
 			      uint16_t vf_id,
 			      struct rte_eth_stats *stats)
 {
@@ -560,7 +594,7 @@ int rte_pmd_bnxt_get_vf_stats(uint8_t port,
 	return bnxt_hwrm_func_qstats(bp, bp->pf.first_vf_id + vf_id, stats);
 }
 
-int rte_pmd_bnxt_reset_vf_stats(uint8_t port,
+int rte_pmd_bnxt_reset_vf_stats(uint16_t port,
 				uint16_t vf_id)
 {
 	struct rte_eth_dev *dev;
@@ -587,7 +621,7 @@ int rte_pmd_bnxt_reset_vf_stats(uint8_t port,
 	return bnxt_hwrm_func_clr_stats(bp, bp->pf.first_vf_id + vf_id);
 }
 
-int rte_pmd_bnxt_get_vf_rx_status(uint8_t port, uint16_t vf_id)
+int rte_pmd_bnxt_get_vf_rx_status(uint16_t port, uint16_t vf_id)
 {
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
@@ -610,10 +644,10 @@ int rte_pmd_bnxt_get_vf_rx_status(uint8_t port, uint16_t vf_id)
 		return -ENOTSUP;
 	}
 
-	return bnxt_vf_default_vnic_count(bp, vf_id);
+	return bnxt_vf_vnic_count(bp, vf_id);
 }
 
-int rte_pmd_bnxt_get_vf_tx_drop_count(uint8_t port, uint16_t vf_id,
+int rte_pmd_bnxt_get_vf_tx_drop_count(uint16_t port, uint16_t vf_id,
 				      uint64_t *count)
 {
 	struct rte_eth_dev *dev;
@@ -641,7 +675,7 @@ int rte_pmd_bnxt_get_vf_tx_drop_count(uint8_t port, uint16_t vf_id,
 					     count);
 }
 
-int rte_pmd_bnxt_mac_addr_add(uint8_t port, struct ether_addr *addr,
+int rte_pmd_bnxt_mac_addr_add(uint16_t port, struct ether_addr *addr,
 				uint32_t vf_id)
 {
 	struct rte_eth_dev *dev;
@@ -672,7 +706,7 @@ int rte_pmd_bnxt_mac_addr_add(uint8_t port, struct ether_addr *addr,
 	/* If the VF currently uses a random MAC, update default to this one */
 	if (bp->pf.vf_info[vf_id].random_mac) {
 		if (rte_pmd_bnxt_get_vf_rx_status(port, vf_id) <= 0)
-			rc = bnxt_hwrm_func_vf_mac(bp, vf_id, (uint8_t *)addr);
+			bnxt_hwrm_func_vf_mac(bp, vf_id, (uint8_t *)addr);
 	}
 
 	/* query the default VNIC id used by the function */
@@ -693,7 +727,7 @@ int rte_pmd_bnxt_mac_addr_add(uint8_t port, struct ether_addr *addr,
 		    (HWRM_CFA_L2_FILTER_ALLOC_INPUT_ENABLES_L2_ADDR |
 		     HWRM_CFA_L2_FILTER_ALLOC_INPUT_ENABLES_L2_ADDR_MASK) &&
 		    memcmp(addr, filter->l2_addr, ETHER_ADDR_LEN) == 0) {
-			bnxt_hwrm_clear_filter(bp, filter);
+			bnxt_hwrm_clear_l2_filter(bp, filter);
 			break;
 		}
 	}
@@ -711,14 +745,14 @@ int rte_pmd_bnxt_mac_addr_add(uint8_t port, struct ether_addr *addr,
 	/* Do not add a filter for the default MAC */
 	if (bnxt_hwrm_func_qcfg_vf_default_mac(bp, vf_id, &dflt_mac) ||
 	    memcmp(filter->l2_addr, dflt_mac.addr_bytes, ETHER_ADDR_LEN))
-		rc = bnxt_hwrm_set_filter(bp, vnic.fw_vnic_id, filter);
+		rc = bnxt_hwrm_set_l2_filter(bp, vnic.fw_vnic_id, filter);
 
 exit:
 	return rc;
 }
 
 int
-rte_pmd_bnxt_set_vf_vlan_insert(uint8_t port, uint16_t vf,
+rte_pmd_bnxt_set_vf_vlan_insert(uint16_t port, uint16_t vf,
 		uint16_t vlan_id)
 {
 	struct rte_eth_dev *dev;
@@ -751,6 +785,55 @@ rte_pmd_bnxt_set_vf_vlan_insert(uint8_t port, uint16_t vf,
 		return 0;
 
 	rc = bnxt_hwrm_set_vf_vlan(bp, vf);
+
+	return rc;
+}
+
+int rte_pmd_bnxt_set_vf_persist_stats(uint16_t port, uint16_t vf, uint8_t on)
+{
+	struct rte_eth_dev_info dev_info;
+	struct rte_eth_dev *dev;
+	uint32_t func_flags;
+	struct bnxt *bp;
+	int rc;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port, -ENODEV);
+
+	if (on > 1)
+		return -EINVAL;
+
+	dev = &rte_eth_devices[port];
+	rte_eth_dev_info_get(port, &dev_info);
+	bp = (struct bnxt *)dev->data->dev_private;
+
+	if (!BNXT_PF(bp)) {
+		RTE_LOG(ERR, PMD,
+			"Attempt to set persist stats on non-PF port %d!\n",
+			port);
+		return -EINVAL;
+	}
+
+	if (vf >= dev_info.max_vfs)
+		return -EINVAL;
+
+	/* Prev setting same as new setting. */
+	if (on == bp->pf.vf_info[vf].persist_stats)
+		return 0;
+
+	func_flags = bp->pf.vf_info[vf].func_cfg_flags;
+
+	if (on)
+		func_flags |=
+			HWRM_FUNC_CFG_INPUT_FLAGS_NO_AUTOCLEAR_STATISTIC;
+	else
+		func_flags &=
+			~HWRM_FUNC_CFG_INPUT_FLAGS_NO_AUTOCLEAR_STATISTIC;
+
+	rc = bnxt_hwrm_func_cfg_vf_set_flags(bp, vf, func_flags);
+	if (!rc) {
+		bp->pf.vf_info[vf].persist_stats = on;
+		bp->pf.vf_info[vf].func_cfg_flags = func_flags;
+	}
 
 	return rc;
 }

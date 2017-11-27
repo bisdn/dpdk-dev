@@ -43,6 +43,7 @@
 #include <rte_debug.h>
 #include <rte_prefetch.h>
 #include <rte_distributor.h>
+#include <rte_pause.h>
 
 #define RX_RING_SIZE 512
 #define TX_RING_SIZE 512
@@ -131,12 +132,14 @@ static void print_stats(void);
  * coming from the mbuf_pool passed as parameter
  */
 static inline int
-port_init(uint8_t port, struct rte_mempool *mbuf_pool)
+port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 {
 	struct rte_eth_conf port_conf = port_conf_default;
 	const uint16_t rxRings = 1, txRings = rte_lcore_count() - 1;
 	int retval;
 	uint16_t q;
+	uint16_t nb_rxd = RX_RING_SIZE;
+	uint16_t nb_txd = TX_RING_SIZE;
 
 	if (port >= rte_eth_dev_count())
 		return -1;
@@ -145,8 +148,12 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	if (retval != 0)
 		return retval;
 
+	retval = rte_eth_dev_adjust_nb_rx_tx_desc(port, &nb_rxd, &nb_txd);
+	if (retval != 0)
+		return retval;
+
 	for (q = 0; q < rxRings; q++) {
-		retval = rte_eth_rx_queue_setup(port, q, RX_RING_SIZE,
+		retval = rte_eth_rx_queue_setup(port, q, nb_rxd,
 						rte_eth_dev_socket_id(port),
 						NULL, mbuf_pool);
 		if (retval < 0)
@@ -154,7 +161,7 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	}
 
 	for (q = 0; q < txRings; q++) {
-		retval = rte_eth_tx_queue_setup(port, q, TX_RING_SIZE,
+		retval = rte_eth_tx_queue_setup(port, q, nb_txd,
 						rte_eth_dev_socket_id(port),
 						NULL);
 		if (retval < 0)
@@ -168,13 +175,13 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	struct rte_eth_link link;
 	rte_eth_link_get_nowait(port, &link);
 	while (!link.link_status) {
-		printf("Waiting for Link up on port %"PRIu8"\n", port);
+		printf("Waiting for Link up on port %"PRIu16"\n", port);
 		sleep(1);
 		rte_eth_link_get_nowait(port, &link);
 	}
 
 	if (!link.link_status) {
-		printf("Link down on port %"PRIu8"\n", port);
+		printf("Link down on port %"PRIu16"\n", port);
 		return 0;
 	}
 
@@ -182,7 +189,7 @@ port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	rte_eth_macaddr_get(port, &addr);
 	printf("Port %u MAC: %02"PRIx8" %02"PRIx8" %02"PRIx8
 			" %02"PRIx8" %02"PRIx8" %02"PRIx8"\n",
-			(unsigned)port,
+			port,
 			addr.addr_bytes[0], addr.addr_bytes[1],
 			addr.addr_bytes[2], addr.addr_bytes[3],
 			addr.addr_bytes[4], addr.addr_bytes[5]);
@@ -203,9 +210,9 @@ struct lcore_params {
 static int
 lcore_rx(struct lcore_params *p)
 {
-	const uint8_t nb_ports = rte_eth_dev_count();
+	const uint16_t nb_ports = rte_eth_dev_count();
 	const int socket_id = rte_socket_id();
-	uint8_t port;
+	uint16_t port;
 	struct rte_mbuf *bufs[BURST_SIZE*2];
 
 	for (port = 0; port < nb_ports; port++) {
@@ -305,9 +312,9 @@ flush_one_port(struct output_buffer *outbuf, uint8_t outp)
 }
 
 static inline void
-flush_all_ports(struct output_buffer *tx_buffers, uint8_t nb_ports)
+flush_all_ports(struct output_buffer *tx_buffers, uint16_t nb_ports)
 {
-	uint8_t outp;
+	uint16_t outp;
 
 	for (outp = 0; outp < nb_ports; outp++) {
 		/* skip ports that are not enabled */
@@ -377,9 +384,9 @@ static int
 lcore_tx(struct rte_ring *in_r)
 {
 	static struct output_buffer tx_buffers[RTE_MAX_ETHPORTS];
-	const uint8_t nb_ports = rte_eth_dev_count();
+	const uint16_t nb_ports = rte_eth_dev_count();
 	const int socket_id = rte_socket_id();
-	uint8_t port;
+	uint16_t port;
 
 	for (port = 0; port < nb_ports; port++) {
 		/* skip ports that are not enabled */
@@ -661,8 +668,8 @@ main(int argc, char *argv[])
 	struct rte_ring *rx_dist_ring;
 	unsigned lcore_id, worker_id = 0;
 	unsigned nb_ports;
-	uint8_t portid;
-	uint8_t nb_ports_available;
+	uint16_t portid;
+	uint16_t nb_ports_available;
 	uint64_t t, freq;
 
 	/* catch ctrl-c so we can print on exit */
@@ -712,10 +719,10 @@ main(int argc, char *argv[])
 			continue;
 		}
 		/* init port */
-		printf("Initializing port %u... done\n", (unsigned) portid);
+		printf("Initializing port %u... done\n", portid);
 
 		if (port_init(portid, mbuf_pool) != 0)
-			rte_exit(EXIT_FAILURE, "Cannot initialize port %"PRIu8"\n",
+			rte_exit(EXIT_FAILURE, "Cannot initialize port %u\n",
 					portid);
 	}
 

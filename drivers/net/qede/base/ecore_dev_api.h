@@ -57,22 +57,13 @@ enum _ecore_status_t ecore_resc_alloc(struct ecore_dev *p_dev);
  */
 void ecore_resc_setup(struct ecore_dev *p_dev);
 
-struct ecore_hw_init_params {
-	/* Tunnelling parameters */
-	struct ecore_tunnel_info *p_tunn;
+enum ecore_override_force_load {
+	ECORE_OVERRIDE_FORCE_LOAD_NONE,
+	ECORE_OVERRIDE_FORCE_LOAD_ALWAYS,
+	ECORE_OVERRIDE_FORCE_LOAD_NEVER,
+};
 
-	bool b_hw_start;
-
-	/* Interrupt mode [msix, inta, etc.] to use */
-	enum ecore_int_mode int_mode;
-
-	/* NPAR tx switching to be used for vports configured for tx-switching
-	 */
-	bool allow_npar_tx_switch;
-
-	/* Binary fw data pointer in binary fw file */
-	const u8 *bin_fw_data;
-
+struct ecore_drv_load_params {
 	/* Indicates whether the driver is running over a crash kernel.
 	 * As part of the load request, this will be used for providing the
 	 * driver role to the MFW.
@@ -90,6 +81,29 @@ struct ecore_hw_init_params {
 
 	/* Avoid engine reset when first PF loads on it */
 	bool avoid_eng_reset;
+
+	/* Allow overriding the default force load behavior */
+	enum ecore_override_force_load override_force_load;
+};
+
+struct ecore_hw_init_params {
+	/* Tunneling parameters */
+	struct ecore_tunnel_info *p_tunn;
+
+	bool b_hw_start;
+
+	/* Interrupt mode [msix, inta, etc.] to use */
+	enum ecore_int_mode int_mode;
+
+	/* NPAR tx switching to be used for vports configured for tx-switching
+	 */
+	bool allow_npar_tx_switch;
+
+	/* Binary fw data pointer in binary fw file */
+	const u8 *bin_fw_data;
+
+	/* Driver load parameters */
+	struct ecore_drv_load_params *p_drv_load_params;
 };
 
 /**
@@ -128,8 +142,9 @@ enum _ecore_status_t ecore_hw_stop(struct ecore_dev *p_dev);
  *
  * @param p_dev
  *
+ * @return enum _ecore_status_t
  */
-void ecore_hw_stop_fastpath(struct ecore_dev *p_dev);
+enum _ecore_status_t ecore_hw_stop_fastpath(struct ecore_dev *p_dev);
 
 #ifndef LINUX_REMOVE
 /**
@@ -140,16 +155,62 @@ void ecore_hw_stop_fastpath(struct ecore_dev *p_dev);
  *
  */
 void ecore_prepare_hibernate(struct ecore_dev *p_dev);
+
+enum ecore_db_rec_width {
+	DB_REC_WIDTH_32B,
+	DB_REC_WIDTH_64B,
+};
+
+enum ecore_db_rec_space {
+	DB_REC_KERNEL,
+	DB_REC_USER,
+};
+
+/**
+ * @brief db_recovery_add - add doorbell information to the doorbell
+ * recovery mechanism.
+ *
+ * @param p_dev
+ * @param db_addr - doorbell address
+ * @param db_data - address of where db_data is stored
+ * @param db_width - doorbell is 32b pr 64b
+ * @param db_space - doorbell recovery addresses are user or kernel space
+ */
+enum _ecore_status_t ecore_db_recovery_add(struct ecore_dev *p_dev,
+					   void OSAL_IOMEM *db_addr,
+					   void *db_data,
+					   enum ecore_db_rec_width db_width,
+					   enum ecore_db_rec_space db_space);
+
+/**
+ * @brief db_recovery_del - remove doorbell information from the doorbell
+ * recovery mechanism. db_data serves as key (db_addr is not unique).
+ *
+ * @param cdev
+ * @param db_addr - doorbell address
+ * @param db_data - address where db_data is stored. Serves as key for the
+ *                  entry to delete.
+ */
+enum _ecore_status_t ecore_db_recovery_del(struct ecore_dev *p_dev,
+					   void OSAL_IOMEM *db_addr,
+					   void *db_data);
+
+static OSAL_INLINE bool ecore_is_mf_ufp(struct ecore_hwfn *p_hwfn)
+{
+	return !!OSAL_TEST_BIT(ECORE_MF_UFP_SPECIFIC, &p_hwfn->p_dev->mf_bits);
+}
+
 #endif
 
 /**
  * @brief ecore_hw_start_fastpath -restart fastpath traffic,
  *        only if hw_stop_fastpath was called
 
- * @param p_dev
+ * @param p_hwfn
  *
+ * @return enum _ecore_status_t
  */
-void ecore_hw_start_fastpath(struct ecore_hwfn *p_hwfn);
+enum _ecore_status_t ecore_hw_start_fastpath(struct ecore_hwfn *p_hwfn);
 
 enum ecore_hw_prepare_result {
 	ECORE_HW_PREPARE_SUCCESS,
@@ -185,6 +246,9 @@ struct ecore_hw_prepare_params {
 
 	/* The OS Epoch time in seconds */
 	u32 epoch;
+
+	/* Allow the MFW to collect a crash dump */
+	bool allow_mdump;
 
 	/* Allow prepare to pass even if some initializations are failing.
 	 * If set, the `p_prepare_res' field would be set with the return,
@@ -237,8 +301,7 @@ struct ecore_ptt *ecore_ptt_acquire(struct ecore_hwfn *p_hwfn);
 void ecore_ptt_release(struct ecore_hwfn *p_hwfn,
 		       struct ecore_ptt *p_ptt);
 
-#ifndef __EXTRACT__LINUX__
-struct ecore_eth_stats {
+struct ecore_eth_stats_common {
 	u64 no_buff_discards;
 	u64 packet_too_big_discard;
 	u64 ttl0_discard;
@@ -270,11 +333,6 @@ struct ecore_eth_stats {
 	u64 rx_256_to_511_byte_packets;
 	u64 rx_512_to_1023_byte_packets;
 	u64 rx_1024_to_1518_byte_packets;
-	u64 rx_1519_to_1522_byte_packets;
-	u64 rx_1519_to_2047_byte_packets;
-	u64 rx_2048_to_4095_byte_packets;
-	u64 rx_4096_to_9216_byte_packets;
-	u64 rx_9217_to_16383_byte_packets;
 	u64 rx_crc_errors;
 	u64 rx_mac_crtl_frames;
 	u64 rx_pause_frames;
@@ -291,14 +349,8 @@ struct ecore_eth_stats {
 	u64 tx_256_to_511_byte_packets;
 	u64 tx_512_to_1023_byte_packets;
 	u64 tx_1024_to_1518_byte_packets;
-	u64 tx_1519_to_2047_byte_packets;
-	u64 tx_2048_to_4095_byte_packets;
-	u64 tx_4096_to_9216_byte_packets;
-	u64 tx_9217_to_16383_byte_packets;
 	u64 tx_pause_frames;
 	u64 tx_pfc_frames;
-	u64 tx_lpi_entry_count;
-	u64 tx_total_collisions;
 	u64 brb_truncates;
 	u64 brb_discards;
 	u64 rx_mac_bytes;
@@ -312,7 +364,33 @@ struct ecore_eth_stats {
 	u64 tx_mac_bc_packets;
 	u64 tx_mac_ctrl_frames;
 };
-#endif
+
+struct ecore_eth_stats_bb {
+	u64 rx_1519_to_1522_byte_packets;
+	u64 rx_1519_to_2047_byte_packets;
+	u64 rx_2048_to_4095_byte_packets;
+	u64 rx_4096_to_9216_byte_packets;
+	u64 rx_9217_to_16383_byte_packets;
+	u64 tx_1519_to_2047_byte_packets;
+	u64 tx_2048_to_4095_byte_packets;
+	u64 tx_4096_to_9216_byte_packets;
+	u64 tx_9217_to_16383_byte_packets;
+	u64 tx_lpi_entry_count;
+	u64 tx_total_collisions;
+};
+
+struct ecore_eth_stats_ah {
+	u64 rx_1519_to_max_byte_packets;
+	u64 tx_1519_to_max_byte_packets;
+};
+
+struct ecore_eth_stats {
+	struct ecore_eth_stats_common common;
+	union {
+		struct ecore_eth_stats_bb bb;
+		struct ecore_eth_stats_ah ah;
+	};
+};
 
 enum ecore_dmae_address_type_t {
 	ECORE_DMAE_ADDRESS_HOST_VIRT,
@@ -561,6 +639,20 @@ enum _ecore_status_t ecore_final_cleanup(struct ecore_hwfn	*p_hwfn,
 					 struct ecore_ptt	*p_ptt,
 					 u16			id,
 					 bool			is_vf);
+
+/**
+ * @brief ecore_get_queue_coalesce - Retrieve coalesce value for a given queue.
+ *
+ * @param p_hwfn
+ * @param p_coal - store coalesce value read from the hardware.
+ * @param p_handle
+ *
+ * @return enum _ecore_status_t
+ **/
+enum _ecore_status_t
+ecore_get_queue_coalesce(struct ecore_hwfn *p_hwfn, u16 *coal,
+			 void *handle);
+
 /**
  * @brief ecore_set_queue_coalesce - Configure coalesce parameters for Rx and
  *    Tx queue. The fact that we can configure coalescing to up to 511, but on
@@ -581,4 +673,16 @@ enum _ecore_status_t
 ecore_set_queue_coalesce(struct ecore_hwfn *p_hwfn, u16 rx_coal,
 			 u16 tx_coal, void *p_handle);
 
+/**
+ * @brief ecore_pglueb_set_pfid_enable - Enable or disable PCI BUS MASTER
+ *
+ * @param p_hwfn
+ * @param p_ptt
+ * @param b_enable - true/false
+ *
+ * @return enum _ecore_status_t
+ */
+enum _ecore_status_t ecore_pglueb_set_pfid_enable(struct ecore_hwfn *p_hwfn,
+						  struct ecore_ptt *p_ptt,
+						  bool b_enable);
 #endif

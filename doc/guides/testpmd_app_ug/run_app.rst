@@ -94,10 +94,6 @@ See the DPDK Getting Started Guides for more information on these options.
 
     Display the version information on startup.
 
-*   ``--xen-dom0``
-
-    Support application running on Xen Domain0 without hugetlbfs.
-
 *   ``--syslog``
 
     Set the syslog facility.
@@ -109,6 +105,10 @@ See the DPDK Getting Started Guides for more information on these options.
 *   ``--huge-dir``
 
     Specify the directory where the hugetlbfs is mounted.
+
+*   ``mbuf-pool-ops-name``:
+
+    Pool ops name for mbuf to use.
 
 *   ``--proc-type``
 
@@ -187,6 +187,19 @@ The commandline options are:
 *   ``-a, --auto-start``
 
     Start forwarding on initialization.
+
+*   ``--tx-first``
+
+    Start forwarding, after sending a burst of packets first.
+
+.. Note::
+
+   This flag should be only used in non-interactive mode.
+
+*   ``--stats-period PERIOD``
+
+    Display statistics every PERIOD seconds, if interactive mode is disabled.
+    The default value is 0, which means that the statistics will not be displayed.
 
 *   ``--nb-cores=N``
 
@@ -349,6 +362,7 @@ The commandline options are:
        csum
        icmpecho
        ieee1588
+       tm
 
 *   ``--rss-ip``
 
@@ -487,3 +501,11 @@ The commandline options are:
 
     Disable printing the occurrence of the designated event. Using all will
     disable all of them.
+
+*   ``--flow-isolate-all``
+
+    Providing this parameter requests flow API isolated mode on all ports at
+    initialization time. It ensures all traffic is received through the
+    configured flow rules only (see flow command).
+
+    Ports that do not support this mode are automatically discarded.

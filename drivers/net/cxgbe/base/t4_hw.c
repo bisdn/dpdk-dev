@@ -40,13 +40,11 @@
 #include <rte_atomic.h>
 #include <rte_branch_prediction.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_tailq.h>
 #include <rte_eal.h>
 #include <rte_alarm.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
-#include <rte_atomic.h>
 #include <rte_malloc.h>
 #include <rte_random.h>
 #include <rte_dev.h>
@@ -404,6 +402,7 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 			t4_os_atomic_list_del(&entry, &adap->mbox_list,
 					      &adap->mbox_lock);
 			t4_report_fw_error(adap);
+			free(temp);
 			return (pcie_fw & F_PCIE_FW_ERR) ? -ENXIO : -EBUSY;
 		}
 
@@ -447,6 +446,7 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 							 &adap->mbox_list,
 							 &adap->mbox_lock));
 		t4_report_fw_error(adap);
+		free(temp);
 		return (v == X_MBOWNER_FW ? -EBUSY : -ETIMEDOUT);
 	}
 
@@ -547,6 +547,7 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 			T4_OS_MBOX_LOCKING(
 				t4_os_atomic_list_del(&entry, &adap->mbox_list,
 						      &adap->mbox_lock));
+			free(temp);
 			return -G_FW_CMD_RETVAL((int)res);
 		}
 	}

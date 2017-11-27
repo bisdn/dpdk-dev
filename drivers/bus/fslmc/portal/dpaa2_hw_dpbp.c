@@ -2,7 +2,7 @@
  *   BSD LICENSE
  *
  *   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright (c) 2016 NXP. All rights reserved.
+ *   Copyright 2016 NXP.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -48,7 +48,7 @@
 #include <rte_ethdev.h>
 
 #include <fslmc_logs.h>
-#include <fslmc_vfio.h>
+#include <rte_fslmc.h>
 #include <mc/fsl_dpbp.h>
 #include "portal/dpaa2_hw_pvt.h"
 #include "portal/dpaa2_hw_dpio.h"
@@ -57,9 +57,10 @@ TAILQ_HEAD(dpbp_dev_list, dpaa2_dpbp_dev);
 static struct dpbp_dev_list dpbp_dev_list
 	= TAILQ_HEAD_INITIALIZER(dpbp_dev_list); /*!< DPBP device list */
 
-int
-dpaa2_create_dpbp_device(
-		int dpbp_id)
+static int
+dpaa2_create_dpbp_device(int vdev_fd __rte_unused,
+			 struct vfio_device_info *obj_info __rte_unused,
+			 int dpbp_id)
 {
 	struct dpaa2_dpbp_dev *dpbp_node;
 	int ret;
@@ -97,7 +98,7 @@ dpaa2_create_dpbp_device(
 
 	TAILQ_INSERT_TAIL(&dpbp_dev_list, dpbp_node, next);
 
-	PMD_INIT_LOG(DEBUG, "DPAA2: Added [dpbp-%d]", dpbp_id);
+	RTE_LOG(DEBUG, PMD, "DPAA2: Added [dpbp.%d]\n", dpbp_id);
 
 	return 0;
 }
@@ -127,3 +128,17 @@ void dpaa2_free_dpbp_dev(struct dpaa2_dpbp_dev *dpbp)
 		}
 	}
 }
+
+int dpaa2_dpbp_supported(void)
+{
+	if (TAILQ_EMPTY(&dpbp_dev_list))
+		return -1;
+	return 0;
+}
+
+static struct rte_dpaa2_object rte_dpaa2_dpbp_obj = {
+	.dev_type = DPAA2_BPOOL,
+	.create = dpaa2_create_dpbp_device,
+};
+
+RTE_PMD_REGISTER_DPAA2_OBJECT(dpbp, rte_dpaa2_dpbp_obj);

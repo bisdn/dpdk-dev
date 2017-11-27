@@ -45,9 +45,6 @@
 /* Maximum number of simultaneous VLAN filters. */
 #define MLX5_MAX_VLAN_IDS 128
 
-/* Maximum number of special flows. */
-#define MLX5_MAX_SPECIAL_FLOWS 4
-
 /*
  * Request TX completion every time descriptors reach this threshold since
  * the previous request. Must be a power of two for performance reasons.
@@ -88,5 +85,24 @@
 
 /* Maximum Packet headers size (L2+L3+L4) for TSO. */
 #define MLX5_MAX_TSO_HEADER 128
+
+/* Default minimum number of Tx queues for vectorized Tx. */
+#define MLX5_VPMD_MIN_TXQS 4
+
+/* Threshold of buffer replenishment for vectorized Rx. */
+#define MLX5_VPMD_RXQ_RPLNSH_THRESH   64U
+
+/* Maximum size of burst for vectorized Rx. */
+#define MLX5_VPMD_RX_MAX_BURST        MLX5_VPMD_RXQ_RPLNSH_THRESH
+
+/*
+ * Maximum size of burst for vectorized Tx. This is related to the maximum size
+ * of Enhanced MPW (eMPW) WQE as vectorized Tx is supported with eMPW.
+ * Careful when changing, large value can cause WQE DS to overlap.
+ */
+#define MLX5_VPMD_TX_MAX_BURST        32U
+
+/* Number of packets vectorized Rx can simultaneously process in a loop. */
+#define MLX5_VPMD_DESCS_PER_LOOP      4
 
 #endif /* RTE_PMD_MLX5_DEFS_H_ */

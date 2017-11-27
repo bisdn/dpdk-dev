@@ -48,6 +48,7 @@
 #include <rte_log.h>
 #include <rte_lcore.h>
 #include <rte_memory.h>
+#include <rte_bus_vdev.h>
 
 #include <rte_string_fns.h>
 #include <rte_errno.h>
@@ -60,9 +61,9 @@
 #define RXTX_RING_SIZE			1024
 #define RXTX_QUEUE_COUNT		4
 
-#define BONDED_DEV_NAME         ("rssconf_bond_dev")
+#define BONDED_DEV_NAME         ("net_bonding_rss")
 
-#define SLAVE_DEV_NAME_FMT      ("rssconf_slave%d")
+#define SLAVE_DEV_NAME_FMT      ("net_null%d")
 #define SLAVE_RXTX_QUEUE_FMT      ("rssconf_slave%d_q%d")
 
 #define NUM_MBUFS 8191
@@ -75,7 +76,7 @@
 #define INVALID_BONDING_MODE    (-1)
 
 struct slave_conf {
-	uint8_t port_id;
+	uint16_t port_id;
 	struct rte_eth_dev_info dev_info;
 
 	struct rte_eth_rss_conf rss_conf;
@@ -159,7 +160,8 @@ static struct rte_eth_conf rss_pmd_conf = {
 		RTE_DIM(test_params.slave_ports))
 
 static int
-configure_ethdev(uint8_t port_id, struct rte_eth_conf *eth_conf, uint8_t start)
+configure_ethdev(uint16_t port_id, struct rte_eth_conf *eth_conf,
+		 uint8_t start)
 {
 	int rxq, txq;
 
@@ -243,7 +245,7 @@ bond_slaves(void)
  * Set all RETA values in port_id to value
  */
 static int
-reta_set(uint8_t port_id, uint8_t value, int reta_size)
+reta_set(uint16_t port_id, uint8_t value, int reta_size)
 {
 	struct rte_eth_rss_reta_entry64 reta_conf[512/RTE_RETA_GROUP_SIZE];
 	int i, j;
@@ -550,8 +552,7 @@ test_setup(void)
 		port_id = rte_eth_dev_count();
 		snprintf(name, sizeof(name), SLAVE_DEV_NAME_FMT, port_id);
 
-		retval = rte_vdev_init(name,
-			"driver=net_null,size=64,copy=0");
+		retval = rte_vdev_init(name, "size=64,copy=0");
 		TEST_ASSERT_SUCCESS(retval, "Failed to create null device '%s'\n",
 				name);
 

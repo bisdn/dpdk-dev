@@ -1,5 +1,5 @@
 ..  BSD LICENSE
-    Copyright (C) Cavium networks Ltd. 2017.
+    Copyright (C) Cavium, Inc. 2017.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
     notice, this list of conditions and the following disclaimer in
     the documentation and/or other materials provided with the
     distribution.
-    * Neither the name of Cavium networks nor the names of its
+    * Neither the name of Cavium, Inc nor the names of its
     contributors may be used to endorse or promote products derived
     from this software without specific prior written permission.
 
@@ -35,7 +35,7 @@ The OCTEONTX SSOVF PMD (**librte_pmd_octeontx_ssovf**) provides poll mode
 eventdev driver support for the inbuilt event device found in the **Cavium OCTEONTX**
 SoC family as well as their virtual functions (VF) in SR-IOV context.
 
-More information can be found at `Cavium Networks Official Website
+More information can be found at `Cavium, Inc Official Website
 <http://www.cavium.com/OCTEON-TX_ARM_Processors.html>`_.
 
 Features
@@ -63,33 +63,7 @@ Supported OCTEONTX SoCs
 Prerequisites
 -------------
 
-There are three main pre-perquisites for executing SSOVF PMD on a OCTEONTX
-compatible board:
-
-1. **OCTEONTX Linux kernel PF driver for Network acceleration HW blocks**
-
-   The OCTEONTX Linux kernel drivers (including the required PF driver for the
-   SSOVF) are available on Github at `octeontx-kmod <https://github.com/caviumnetworks/octeontx-kmod>`_
-   along with build, install and dpdk usage instructions.
-
-2. **ARM64 Tool Chain**
-
-   For example, the *aarch64* Linaro Toolchain, which can be obtained from
-   `here <https://releases.linaro.org/components/toolchain/binaries/4.9-2017.01/aarch64-linux-gnu>`_.
-
-3. **Rootfile system**
-
-   Any *aarch64* supporting filesystem can be used. For example,
-   Ubuntu 15.10 (Wily) or 16.04 LTS (Xenial) userland which can be obtained
-   from `<http://cdimage.ubuntu.com/ubuntu-base/releases/16.04/release/ubuntu-base-16.04.1-base-arm64.tar.gz>`_.
-
-   As an alternative method, SSOVF PMD can also be executed using images provided
-   as part of SDK from Cavium. The SDK includes all the above prerequisites necessary
-   to bring up a OCTEONTX board.
-
-   SDK and related information can be obtained from: `Cavium support site <https://support.cavium.com/>`_.
-
-- Follow the DPDK :ref:`Getting Started Guide for Linux <linux_gsg>` to setup the basic DPDK environment.
+See :doc: `../platform/octeontx` for setup information.
 
 Pre-Installation Configuration
 ------------------------------
@@ -149,3 +123,8 @@ Burst mode support
 Burst mode is not supported. Dequeue and Enqueue functions accepts only single
 event at a time.
 
+Rx adapter support
+~~~~~~~~~~~~~~~~~~
+
+When eth_octeontx is used as Rx adapter event schedule type
+``RTE_SCHED_TYPE_PARALLEL`` is not supported.

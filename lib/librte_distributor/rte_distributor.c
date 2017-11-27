@@ -41,7 +41,8 @@
 #include <rte_errno.h>
 #include <rte_string_fns.h>
 #include <rte_eal_memconfig.h>
-#include <rte_compat.h>
+#include <rte_pause.h>
+
 #include "rte_distributor_private.h"
 #include "rte_distributor.h"
 #include "rte_distributor_v20.h"
@@ -431,7 +432,7 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 			next_value = (((int64_t)(uintptr_t)next_mb) <<
 					RTE_DISTRIB_FLAG_BITS);
 			/*
-			 * User is advocated to set tag vaue for each
+			 * User is advocated to set tag value for each
 			 * mbuf before calling rte_distributor_process.
 			 * User defined tags are used to identify flows,
 			 * or sessions.
@@ -441,7 +442,7 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 
 			/*
 			 * Uncommenting the next line will cause the find_match
-			 * function to be optimised out, making this function
+			 * function to be optimized out, making this function
 			 * do parallel (non-atomic) distribution
 			 */
 			/* matches[j] = 0; */
@@ -535,7 +536,7 @@ MAP_STATIC_SYMBOL(int rte_distributor_returned_pkts(struct rte_distributor *d,
 
 /*
  * Return the number of packets in-flight in a distributor, i.e. packets
- * being workered on or queued up in a backlog.
+ * being worked on or queued up in a backlog.
  */
 static inline unsigned int
 total_outstanding(const struct rte_distributor *d)
@@ -656,15 +657,13 @@ rte_distributor_create_v1705(const char *name,
 	d->num_workers = num_workers;
 	d->alg_type = alg_type;
 
+	d->dist_match_fn = RTE_DIST_MATCH_SCALAR;
 #if defined(RTE_ARCH_X86)
-	if (rte_cpu_get_flag_enabled(RTE_CPUFLAG_SSE4_2))
-		d->dist_match_fn = RTE_DIST_MATCH_VECTOR;
-	else
+	d->dist_match_fn = RTE_DIST_MATCH_VECTOR;
 #endif
-		d->dist_match_fn = RTE_DIST_MATCH_SCALAR;
 
 	/*
-	 * Set up the backog tags so they're pointing at the second cache
+	 * Set up the backlog tags so they're pointing at the second cache
 	 * line for performance during flow matching
 	 */
 	for (i = 0 ; i < num_workers ; i++)

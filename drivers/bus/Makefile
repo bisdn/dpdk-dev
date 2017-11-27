@@ -1,7 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2016 NXP. All rights reserved.
-#   All rights reserved.
+#   Copyright 2016 NXP.
 #
 #   Redistribution and use in source and binary forms, with or without
 #   modification, are permitted provided that the following conditions
@@ -31,9 +30,9 @@
 
 include $(RTE_SDK)/mk/rte.vars.mk
 
-core-libs := librte_eal librte_mbuf librte_mempool librte_ring librte_ether
-
+DIRS-$(CONFIG_RTE_LIBRTE_DPAA_BUS) += dpaa
 DIRS-$(CONFIG_RTE_LIBRTE_FSLMC_BUS) += fslmc
-DEPDIRS-fslmc = $(core-libs)
+DIRS-$(CONFIG_RTE_LIBRTE_PCI_BUS) += pci
+DIRS-$(CONFIG_RTE_LIBRTE_VDEV_BUS) += vdev
 
 include $(RTE_SDK)/mk/rte.subdir.mk

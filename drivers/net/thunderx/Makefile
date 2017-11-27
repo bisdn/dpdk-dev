@@ -1,6 +1,6 @@
 #   BSD LICENSE
 #
-#   Copyright(c) 2016 Cavium Networks. All rights reserved.
+#   Copyright(c) 2016 Cavium, Inc. All rights reserved.
 #   All rights reserved.
 #
 #   Redistribution and use in source and binary forms, with or without
@@ -13,7 +13,7 @@
 #       notice, this list of conditions and the following disclaimer in
 #       the documentation and/or other materials provided with the
 #       distribution.
-#     * Neither the name of Cavium Networks nor the names of its
+#     * Neither the name of Cavium, Inc nor the names of its
 #       contributors may be used to endorse or promote products derived
 #       from this software without specific prior written permission.
 #
@@ -40,12 +40,15 @@ LIB = librte_pmd_thunderx_nicvf.a
 CFLAGS += $(WERROR_FLAGS)
 
 LDLIBS += -lm
+LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool -lrte_ring
+LDLIBS += -lrte_ethdev -lrte_net -lrte_kvargs
+LDLIBS += -lrte_bus_pci
 
 EXPORT_MAP := rte_pmd_thunderx_nicvf_version.map
 
 LIBABIVER := 1
 
-OBJS_BASE_DRIVER=$(patsubst %.c,%.o,$(notdir $(wildcard $(SRCDIR)/base/*.c)))
+OBJS_BASE_DRIVER=$(sort $(patsubst %.c,%.o,$(notdir $(wildcard $(SRCDIR)/base/*.c))))
 $(foreach obj, $(OBJS_BASE_DRIVER), $(eval CFLAGS_$(obj)+=$(CFLAGS_BASE_DRIVER)))
 
 VPATH += $(SRCDIR)/base

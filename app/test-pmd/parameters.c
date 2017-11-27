@@ -41,7 +41,6 @@
 #include <time.h>
 #include <fcntl.h>
 #include <sys/types.h>
-#include <errno.h>
 
 #include <sys/queue.h>
 #include <sys/stat.h>
@@ -56,7 +55,6 @@
 #include <rte_debug.h>
 #include <rte_cycles.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_launch.h>
 #include <rte_eal.h>
 #include <rte_per_lcore.h>
@@ -89,6 +87,7 @@ usage(char* progname)
 	       "[--cmdline-file=FILENAME] "
 #endif
 	       "[--help|-h] | [--auto-start|-a] | ["
+	       "--tx-first | --stats-period=PERIOD | "
 	       "--coremask=COREMASK --portmask=PORTMASK --numa "
 	       "--mbuf-size= | --total-num-mbufs= | "
 	       "--nb-cores= | --nb-ports= | "
@@ -109,6 +108,10 @@ usage(char* progname)
 	printf("  --auto-start: start forwarding on init "
 	       "[always when non-interactive].\n");
 	printf("  --help: display this message and quit.\n");
+	printf("  --tx-first: start forwarding sending a burst first "
+	       "(only if interactive is disabled).\n");
+	printf("  --stats-period=PERIOD: statistics will be shown "
+	       "every PERIOD seconds (only if interactive is disabled).\n");
 	printf("  --nb-cores=N: set the number of forwarding cores "
 	       "(1 <= N <= %d).\n", nb_lcores);
 	printf("  --nb-ports=N: set the number of forwarding ports "
@@ -158,6 +161,7 @@ usage(char* progname)
 	printf("  --disable-crc-strip: disable CRC stripping by hardware.\n");
 	printf("  --enable-lro: enable large receive offload.\n");
 	printf("  --enable-rx-cksum: enable rx hardware checksum offload.\n");
+	printf("  --enable-rx-timestamp: enable rx hardware timestamp offload.\n");
 	printf("  --disable-hw-vlan: disable hardware vlan.\n");
 	printf("  --disable-hw-vlan-filter: disable hardware vlan filter.\n");
 	printf("  --disable-hw-vlan-strip: disable hardware vlan strip.\n");
@@ -207,9 +211,11 @@ usage(char* progname)
 	printf("  --bitrate-stats=N: set the logical core N to perform "
 		"bit-rate calculation.\n");
 	printf("  --print-event <unknown|intr_lsc|queue_state|intr_reset|vf_mbox|macsec|intr_rmv|all>: "
-	       "enable print of designated event or all of them.");
+	       "enable print of designated event or all of them.\n");
 	printf("  --mask-event <unknown|intr_lsc|queue_state|intr_reset|vf_mbox|macsec|intr_rmv|all>: "
-	       "disable print of designated event or all of them.");
+	       "disable print of designated event or all of them.\n");
+	printf("  --flow-isolate-all: "
+	       "requests flow API isolated mode on all ports at initialization time.\n");
 }
 
 #ifdef RTE_LIBRTE_CMDLINE
@@ -387,7 +393,8 @@ parse_portnuma_config(const char *q_arg)
 	char s[256];
 	const char *p, *p0 = q_arg;
 	char *end;
-	uint8_t i,port_id,socket_id;
+	uint8_t i, socket_id;
+	portid_t port_id;
 	unsigned size;
 	enum fieldnames {
 		FLD_PORT = 0,
@@ -417,8 +424,9 @@ parse_portnuma_config(const char *q_arg)
 			if (errno != 0 || end == str_fld[i] || int_fld[i] > 255)
 				return -1;
 		}
-		port_id = (uint8_t)int_fld[FLD_PORT];
-		if (port_id_is_invalid(port_id, ENABLED_WARN)) {
+		port_id = (portid_t)int_fld[FLD_PORT];
+		if (port_id_is_invalid(port_id, ENABLED_WARN) ||
+			port_id == (portid_t)RTE_PORT_ALL) {
 			printf("Valid port range is [0");
 			RTE_ETH_FOREACH_DEV(pid)
 				printf(", %d", pid);
@@ -442,7 +450,8 @@ parse_ringnuma_config(const char *q_arg)
 	char s[256];
 	const char *p, *p0 = q_arg;
 	char *end;
-	uint8_t i,port_id,ring_flag,socket_id;
+	uint8_t i, ring_flag, socket_id;
+	portid_t port_id;
 	unsigned size;
 	enum fieldnames {
 		FLD_PORT = 0,
@@ -476,8 +485,9 @@ parse_ringnuma_config(const char *q_arg)
 			if (errno != 0 || end == str_fld[i] || int_fld[i] > 255)
 				return -1;
 		}
-		port_id = (uint8_t)int_fld[FLD_PORT];
-		if (port_id_is_invalid(port_id, ENABLED_WARN)) {
+		port_id = (portid_t)int_fld[FLD_PORT];
+		if (port_id_is_invalid(port_id, ENABLED_WARN) ||
+			port_id == (portid_t)RTE_PORT_ALL) {
 			printf("Valid port range is [0");
 			RTE_ETH_FOREACH_DEV(pid)
 				printf(", %d", pid);
@@ -566,6 +576,8 @@ launch_args_parse(int argc, char** argv)
 		{ "eth-peers-configfile",	1, 0, 0 },
 		{ "eth-peer",			1, 0, 0 },
 #endif
+		{ "tx-first",			0, 0, 0 },
+		{ "stats-period",		1, 0, 0 },
 		{ "ports",			1, 0, 0 },
 		{ "nb-cores",			1, 0, 0 },
 		{ "nb-ports",			1, 0, 0 },
@@ -593,6 +605,7 @@ launch_args_parse(int argc, char** argv)
 		{ "disable-crc-strip",          0, 0, 0 },
 		{ "enable-lro",                 0, 0, 0 },
 		{ "enable-rx-cksum",            0, 0, 0 },
+		{ "enable-rx-timestamp",        0, 0, 0 },
 		{ "enable-scatter",             0, 0, 0 },
 		{ "disable-hw-vlan",            0, 0, 0 },
 		{ "disable-hw-vlan-filter",     0, 0, 0 },
@@ -623,6 +636,7 @@ launch_args_parse(int argc, char** argv)
 		{ "tx-queue-stats-mapping",	1, 0, 0 },
 		{ "rx-queue-stats-mapping",	1, 0, 0 },
 		{ "no-flush-rx",	0, 0, 0 },
+		{ "flow-isolate-all",	        0, 0, 0 },
 		{ "txpkts",			1, 0, 0 },
 		{ "disable-link-check",		0, 0, 0 },
 		{ "no-lsc-interrupt",		0, 0, 0 },
@@ -674,6 +688,23 @@ launch_args_parse(int argc, char** argv)
 				printf("Auto-start selected\n");
 				auto_start = 1;
 			}
+			if (!strcmp(lgopts[opt_idx].name, "tx-first")) {
+				printf("Ports to start sending a burst of "
+						"packets first\n");
+				tx_first = 1;
+			}
+			if (!strcmp(lgopts[opt_idx].name, "stats-period")) {
+				char *end = NULL;
+				unsigned int n;
+
+				n = strtoul(optarg, &end, 10);
+				if ((optarg[0] == '\0') || (end == NULL) ||
+						(*end != '\0'))
+					break;
+
+				stats_period = n;
+				break;
+			}
 			if (!strcmp(lgopts[opt_idx].name,
 				    "eth-peers-configfile")) {
 				if (init_peer_eth_addrs(optarg) != 0)
@@ -708,7 +739,7 @@ launch_args_parse(int argc, char** argv)
 			if (!strcmp(lgopts[opt_idx].name, "nb-ports")) {
 				n = atoi(optarg);
 				if (n > 0 && n <= nb_ports)
-					nb_fwd_ports = (uint8_t) n;
+					nb_fwd_ports = n;
 				else
 					rte_exit(EXIT_FAILURE,
 						 "Invalid port %d\n", n);
@@ -873,6 +904,9 @@ launch_args_parse(int argc, char** argv)
 				rx_mode.enable_scatter = 1;
 			if (!strcmp(lgopts[opt_idx].name, "enable-rx-cksum"))
 				rx_mode.hw_ip_checksum = 1;
+			if (!strcmp(lgopts[opt_idx].name,
+					"enable-rx-timestamp"))
+				rx_mode.hw_timestamp = 1;
 
 			if (!strcmp(lgopts[opt_idx].name, "disable-hw-vlan")) {
 				rx_mode.hw_vlan_filter = 0;
@@ -906,7 +940,7 @@ launch_args_parse(int argc, char** argv)
 					port_topology = PORT_TOPOLOGY_LOOP;
 				else
 					rte_exit(EXIT_FAILURE, "port-topology %s invalid -"
-						 " must be: paired or chained \n",
+						 " must be: paired, chained or loop\n",
 						 optarg);
 			}
 			if (!strcmp(lgopts[opt_idx].name, "forward-mode"))
@@ -1081,6 +1115,8 @@ launch_args_parse(int argc, char** argv)
 				lsc_interrupt = 0;
 			if (!strcmp(lgopts[opt_idx].name, "no-rmv-interrupt"))
 				rmv_interrupt = 0;
+			if (!strcmp(lgopts[opt_idx].name, "flow-isolate-all"))
+				flow_isolate_all = 1;
 			if (!strcmp(lgopts[opt_idx].name, "print-event"))
 				if (parse_event_printing_config(optarg, 1)) {
 					rte_exit(EXIT_FAILURE,

@@ -125,143 +125,199 @@ struct rte_qede_xstats_name_off {
 };
 
 static const struct rte_qede_xstats_name_off qede_xstats_strings[] = {
-	{"rx_unicast_bytes", offsetof(struct ecore_eth_stats, rx_ucast_bytes)},
+	{"rx_unicast_bytes",
+		offsetof(struct ecore_eth_stats_common, rx_ucast_bytes)},
 	{"rx_multicast_bytes",
-		offsetof(struct ecore_eth_stats, rx_mcast_bytes)},
+		offsetof(struct ecore_eth_stats_common, rx_mcast_bytes)},
 	{"rx_broadcast_bytes",
-		offsetof(struct ecore_eth_stats, rx_bcast_bytes)},
-	{"rx_unicast_packets", offsetof(struct ecore_eth_stats, rx_ucast_pkts)},
+		offsetof(struct ecore_eth_stats_common, rx_bcast_bytes)},
+	{"rx_unicast_packets",
+		offsetof(struct ecore_eth_stats_common, rx_ucast_pkts)},
 	{"rx_multicast_packets",
-		offsetof(struct ecore_eth_stats, rx_mcast_pkts)},
+		offsetof(struct ecore_eth_stats_common, rx_mcast_pkts)},
 	{"rx_broadcast_packets",
-		offsetof(struct ecore_eth_stats, rx_bcast_pkts)},
+		offsetof(struct ecore_eth_stats_common, rx_bcast_pkts)},
 
-	{"tx_unicast_bytes", offsetof(struct ecore_eth_stats, tx_ucast_bytes)},
+	{"tx_unicast_bytes",
+		offsetof(struct ecore_eth_stats_common, tx_ucast_bytes)},
 	{"tx_multicast_bytes",
-		offsetof(struct ecore_eth_stats, tx_mcast_bytes)},
+		offsetof(struct ecore_eth_stats_common, tx_mcast_bytes)},
 	{"tx_broadcast_bytes",
-		offsetof(struct ecore_eth_stats, tx_bcast_bytes)},
-	{"tx_unicast_packets", offsetof(struct ecore_eth_stats, tx_ucast_pkts)},
+		offsetof(struct ecore_eth_stats_common, tx_bcast_bytes)},
+	{"tx_unicast_packets",
+		offsetof(struct ecore_eth_stats_common, tx_ucast_pkts)},
 	{"tx_multicast_packets",
-		offsetof(struct ecore_eth_stats, tx_mcast_pkts)},
+		offsetof(struct ecore_eth_stats_common, tx_mcast_pkts)},
 	{"tx_broadcast_packets",
-		offsetof(struct ecore_eth_stats, tx_bcast_pkts)},
+		offsetof(struct ecore_eth_stats_common, tx_bcast_pkts)},
 
 	{"rx_64_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_64_byte_packets)},
+		offsetof(struct ecore_eth_stats_common, rx_64_byte_packets)},
 	{"rx_65_to_127_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_65_to_127_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 rx_65_to_127_byte_packets)},
 	{"rx_128_to_255_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_128_to_255_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 rx_128_to_255_byte_packets)},
 	{"rx_256_to_511_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_256_to_511_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 rx_256_to_511_byte_packets)},
 	{"rx_512_to_1023_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_512_to_1023_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 rx_512_to_1023_byte_packets)},
 	{"rx_1024_to_1518_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_1024_to_1518_byte_packets)},
-	{"rx_1519_to_1522_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_1519_to_1522_byte_packets)},
-	{"rx_1519_to_2047_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_1519_to_2047_byte_packets)},
-	{"rx_2048_to_4095_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_2048_to_4095_byte_packets)},
-	{"rx_4096_to_9216_byte_packets",
-		offsetof(struct ecore_eth_stats, rx_4096_to_9216_byte_packets)},
-	{"rx_9217_to_16383_byte_packets",
-		offsetof(struct ecore_eth_stats,
-			 rx_9217_to_16383_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 rx_1024_to_1518_byte_packets)},
 	{"tx_64_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_64_byte_packets)},
+		offsetof(struct ecore_eth_stats_common, tx_64_byte_packets)},
 	{"tx_65_to_127_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_65_to_127_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 tx_65_to_127_byte_packets)},
 	{"tx_128_to_255_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_128_to_255_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 tx_128_to_255_byte_packets)},
 	{"tx_256_to_511_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_256_to_511_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 tx_256_to_511_byte_packets)},
 	{"tx_512_to_1023_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_512_to_1023_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 tx_512_to_1023_byte_packets)},
 	{"tx_1024_to_1518_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_1024_to_1518_byte_packets)},
-	{"trx_1519_to_1522_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_1519_to_2047_byte_packets)},
-	{"tx_2048_to_4095_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_2048_to_4095_byte_packets)},
-	{"tx_4096_to_9216_byte_packets",
-		offsetof(struct ecore_eth_stats, tx_4096_to_9216_byte_packets)},
-	{"tx_9217_to_16383_byte_packets",
-		offsetof(struct ecore_eth_stats,
-			 tx_9217_to_16383_byte_packets)},
+		offsetof(struct ecore_eth_stats_common,
+			 tx_1024_to_1518_byte_packets)},
 
 	{"rx_mac_crtl_frames",
-		offsetof(struct ecore_eth_stats, rx_mac_crtl_frames)},
+		offsetof(struct ecore_eth_stats_common, rx_mac_crtl_frames)},
 	{"tx_mac_control_frames",
-		offsetof(struct ecore_eth_stats, tx_mac_ctrl_frames)},
-	{"rx_pause_frames", offsetof(struct ecore_eth_stats, rx_pause_frames)},
-	{"tx_pause_frames", offsetof(struct ecore_eth_stats, tx_pause_frames)},
+		offsetof(struct ecore_eth_stats_common, tx_mac_ctrl_frames)},
+	{"rx_pause_frames",
+		offsetof(struct ecore_eth_stats_common, rx_pause_frames)},
+	{"tx_pause_frames",
+		offsetof(struct ecore_eth_stats_common, tx_pause_frames)},
 	{"rx_priority_flow_control_frames",
-		offsetof(struct ecore_eth_stats, rx_pfc_frames)},
+		offsetof(struct ecore_eth_stats_common, rx_pfc_frames)},
 	{"tx_priority_flow_control_frames",
-		offsetof(struct ecore_eth_stats, tx_pfc_frames)},
+		offsetof(struct ecore_eth_stats_common, tx_pfc_frames)},
 
-	{"rx_crc_errors", offsetof(struct ecore_eth_stats, rx_crc_errors)},
-	{"rx_align_errors", offsetof(struct ecore_eth_stats, rx_align_errors)},
+	{"rx_crc_errors",
+		offsetof(struct ecore_eth_stats_common, rx_crc_errors)},
+	{"rx_align_errors",
+		offsetof(struct ecore_eth_stats_common, rx_align_errors)},
 	{"rx_carrier_errors",
-		offsetof(struct ecore_eth_stats, rx_carrier_errors)},
+		offsetof(struct ecore_eth_stats_common, rx_carrier_errors)},
 	{"rx_oversize_packet_errors",
-		offsetof(struct ecore_eth_stats, rx_oversize_packets)},
-	{"rx_jabber_errors", offsetof(struct ecore_eth_stats, rx_jabbers)},
+		offsetof(struct ecore_eth_stats_common, rx_oversize_packets)},
+	{"rx_jabber_errors",
+		offsetof(struct ecore_eth_stats_common, rx_jabbers)},
 	{"rx_undersize_packet_errors",
-		offsetof(struct ecore_eth_stats, rx_undersize_packets)},
-	{"rx_fragments", offsetof(struct ecore_eth_stats, rx_fragments)},
+		offsetof(struct ecore_eth_stats_common, rx_undersize_packets)},
+	{"rx_fragments", offsetof(struct ecore_eth_stats_common, rx_fragments)},
 	{"rx_host_buffer_not_available",
-		offsetof(struct ecore_eth_stats, no_buff_discards)},
+		offsetof(struct ecore_eth_stats_common, no_buff_discards)},
 	/* Number of packets discarded because they are bigger than MTU */
 	{"rx_packet_too_big_discards",
-		offsetof(struct ecore_eth_stats, packet_too_big_discard)},
+		offsetof(struct ecore_eth_stats_common,
+			 packet_too_big_discard)},
 	{"rx_ttl_zero_discards",
-		offsetof(struct ecore_eth_stats, ttl0_discard)},
+		offsetof(struct ecore_eth_stats_common, ttl0_discard)},
 	{"rx_multi_function_tag_filter_discards",
-		offsetof(struct ecore_eth_stats, mftag_filter_discards)},
+		offsetof(struct ecore_eth_stats_common, mftag_filter_discards)},
 	{"rx_mac_filter_discards",
-		offsetof(struct ecore_eth_stats, mac_filter_discards)},
+		offsetof(struct ecore_eth_stats_common, mac_filter_discards)},
 	{"rx_hw_buffer_truncates",
-		offsetof(struct ecore_eth_stats, brb_truncates)},
+		offsetof(struct ecore_eth_stats_common, brb_truncates)},
 	{"rx_hw_buffer_discards",
-		offsetof(struct ecore_eth_stats, brb_discards)},
-	{"tx_lpi_entry_count",
-		offsetof(struct ecore_eth_stats, tx_lpi_entry_count)},
-	{"tx_total_collisions",
-		offsetof(struct ecore_eth_stats, tx_total_collisions)},
+		offsetof(struct ecore_eth_stats_common, brb_discards)},
 	{"tx_error_drop_packets",
-		offsetof(struct ecore_eth_stats, tx_err_drop_pkts)},
+		offsetof(struct ecore_eth_stats_common, tx_err_drop_pkts)},
 
-	{"rx_mac_bytes", offsetof(struct ecore_eth_stats, rx_mac_bytes)},
+	{"rx_mac_bytes", offsetof(struct ecore_eth_stats_common, rx_mac_bytes)},
 	{"rx_mac_unicast_packets",
-		offsetof(struct ecore_eth_stats, rx_mac_uc_packets)},
+		offsetof(struct ecore_eth_stats_common, rx_mac_uc_packets)},
 	{"rx_mac_multicast_packets",
-		offsetof(struct ecore_eth_stats, rx_mac_mc_packets)},
+		offsetof(struct ecore_eth_stats_common, rx_mac_mc_packets)},
 	{"rx_mac_broadcast_packets",
-		offsetof(struct ecore_eth_stats, rx_mac_bc_packets)},
+		offsetof(struct ecore_eth_stats_common, rx_mac_bc_packets)},
 	{"rx_mac_frames_ok",
-		offsetof(struct ecore_eth_stats, rx_mac_frames_ok)},
-	{"tx_mac_bytes", offsetof(struct ecore_eth_stats, tx_mac_bytes)},
+		offsetof(struct ecore_eth_stats_common, rx_mac_frames_ok)},
+	{"tx_mac_bytes", offsetof(struct ecore_eth_stats_common, tx_mac_bytes)},
 	{"tx_mac_unicast_packets",
-		offsetof(struct ecore_eth_stats, tx_mac_uc_packets)},
+		offsetof(struct ecore_eth_stats_common, tx_mac_uc_packets)},
 	{"tx_mac_multicast_packets",
-		offsetof(struct ecore_eth_stats, tx_mac_mc_packets)},
+		offsetof(struct ecore_eth_stats_common, tx_mac_mc_packets)},
 	{"tx_mac_broadcast_packets",
-		offsetof(struct ecore_eth_stats, tx_mac_bc_packets)},
+		offsetof(struct ecore_eth_stats_common, tx_mac_bc_packets)},
 
 	{"lro_coalesced_packets",
-		offsetof(struct ecore_eth_stats, tpa_coalesced_pkts)},
+		offsetof(struct ecore_eth_stats_common, tpa_coalesced_pkts)},
 	{"lro_coalesced_events",
-		offsetof(struct ecore_eth_stats, tpa_coalesced_events)},
+		offsetof(struct ecore_eth_stats_common, tpa_coalesced_events)},
 	{"lro_aborts_num",
-		offsetof(struct ecore_eth_stats, tpa_aborts_num)},
+		offsetof(struct ecore_eth_stats_common, tpa_aborts_num)},
 	{"lro_not_coalesced_packets",
-		offsetof(struct ecore_eth_stats, tpa_not_coalesced_pkts)},
+		offsetof(struct ecore_eth_stats_common,
+			 tpa_not_coalesced_pkts)},
 	{"lro_coalesced_bytes",
-		offsetof(struct ecore_eth_stats, tpa_coalesced_bytes)},
+		offsetof(struct ecore_eth_stats_common,
+			 tpa_coalesced_bytes)},
+};
+
+static const struct rte_qede_xstats_name_off qede_bb_xstats_strings[] = {
+	{"rx_1519_to_1522_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 rx_1519_to_1522_byte_packets)},
+	{"rx_1519_to_2047_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 rx_1519_to_2047_byte_packets)},
+	{"rx_2048_to_4095_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 rx_2048_to_4095_byte_packets)},
+	{"rx_4096_to_9216_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 rx_4096_to_9216_byte_packets)},
+	{"rx_9217_to_16383_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 rx_9217_to_16383_byte_packets)},
+
+	{"tx_1519_to_2047_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 tx_1519_to_2047_byte_packets)},
+	{"tx_2048_to_4095_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 tx_2048_to_4095_byte_packets)},
+	{"tx_4096_to_9216_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 tx_4096_to_9216_byte_packets)},
+	{"tx_9217_to_16383_byte_packets",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb,
+			 tx_9217_to_16383_byte_packets)},
+
+	{"tx_lpi_entry_count",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb, tx_lpi_entry_count)},
+	{"tx_total_collisions",
+		offsetof(struct ecore_eth_stats, bb) +
+		offsetof(struct ecore_eth_stats_bb, tx_total_collisions)},
+};
+
+static const struct rte_qede_xstats_name_off qede_ah_xstats_strings[] = {
+	{"rx_1519_to_max_byte_packets",
+		offsetof(struct ecore_eth_stats, ah) +
+		offsetof(struct ecore_eth_stats_ah,
+			 rx_1519_to_max_byte_packets)},
+	{"tx_1519_to_max_byte_packets",
+		offsetof(struct ecore_eth_stats, ah) +
+		offsetof(struct ecore_eth_stats_ah,
+			 tx_1519_to_max_byte_packets)},
 };
 
 static const struct rte_qede_xstats_name_off qede_rxq_xstats_strings[] = {
@@ -307,9 +363,10 @@ static void qede_print_adapter_info(struct qede_dev *qdev)
 
 	DP_INFO(edev, "*********************************\n");
 	DP_INFO(edev, " DPDK version:%s\n", rte_version());
-	DP_INFO(edev, " Chip details : %s%d\n",
+	DP_INFO(edev, " Chip details : %s %c%d\n",
 		  ECORE_IS_BB(edev) ? "BB" : "AH",
-		  CHIP_REV_IS_A0(edev) ? 0 : 1);
+		  'A' + edev->chip_rev,
+		  (int)edev->chip_metal);
 	snprintf(ver_str, QEDE_PMD_DRV_VER_STR_SIZE, "%d.%d.%d.%d",
 		 info->fw_major, info->fw_minor, info->fw_rev, info->fw_eng);
 	snprintf(drv_ver, QEDE_PMD_DRV_VER_STR_SIZE, "%s_%s",
@@ -396,6 +453,13 @@ int qede_activate_vport(struct rte_eth_dev *eth_dev, bool flg)
 	params.update_vport_active_tx_flg = 1;
 	params.vport_active_rx_flg = flg;
 	params.vport_active_tx_flg = flg;
+#ifndef RTE_LIBRTE_QEDE_VF_TX_SWITCH
+	if (IS_VF(edev)) {
+		params.update_tx_switching_flg = 1;
+		params.tx_switching_flg = !flg;
+		DP_INFO(edev, "VF tx-switching is disabled\n");
+	}
+#endif
 	for_each_hwfn(edev, i) {
 		p_hwfn = &edev->hwfns[i];
 		params.opaque_fid = p_hwfn->hw_info.opaque_fid;
@@ -406,7 +470,8 @@ int qede_activate_vport(struct rte_eth_dev *eth_dev, bool flg)
 			break;
 		}
 	}
-	DP_INFO(edev, "vport %s\n", flg ? "activated" : "deactivated");
+	DP_INFO(edev, "vport is %s\n", flg ? "activated" : "deactivated");
+
 	return rc;
 }
 
@@ -463,7 +528,7 @@ int qede_enable_tpa(struct rte_eth_dev *eth_dev, bool flg)
 			return -1;
 		}
 	}
-
+	qdev->enable_lro = flg;
 	DP_INFO(edev, "LRO is %s\n", flg ? "enabled" : "disabled");
 
 	return 0;
@@ -545,15 +610,53 @@ qed_configure_filter_rx_mode(struct rte_eth_dev *eth_dev,
 	return ecore_filter_accept_cmd(edev, 0, flags, false, false,
 			ECORE_SPQ_MODE_CB, NULL);
 }
-static void qede_set_cmn_tunn_param(struct ecore_tunnel_info *p_tunn,
-				    uint8_t clss, bool mode, bool mask)
+
+static int
+qede_vxlan_enable(struct rte_eth_dev *eth_dev, uint8_t clss,
+		  bool enable, bool mask)
 {
-	memset(p_tunn, 0, sizeof(struct ecore_tunnel_info));
-	p_tunn->vxlan.b_update_mode = mode;
-	p_tunn->vxlan.b_mode_enabled = mask;
-	p_tunn->b_update_rx_cls = true;
-	p_tunn->b_update_tx_cls = true;
-	p_tunn->vxlan.tun_cls = clss;
+	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
+	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
+	enum _ecore_status_t rc = ECORE_INVAL;
+	struct ecore_ptt *p_ptt;
+	struct ecore_tunnel_info tunn;
+	struct ecore_hwfn *p_hwfn;
+	int i;
+
+	memset(&tunn, 0, sizeof(struct ecore_tunnel_info));
+	tunn.vxlan.b_update_mode = enable;
+	tunn.vxlan.b_mode_enabled = mask;
+	tunn.b_update_rx_cls = true;
+	tunn.b_update_tx_cls = true;
+	tunn.vxlan.tun_cls = clss;
+
+	for_each_hwfn(edev, i) {
+		p_hwfn = &edev->hwfns[i];
+		if (IS_PF(edev)) {
+			p_ptt = ecore_ptt_acquire(p_hwfn);
+			if (!p_ptt)
+				return -EAGAIN;
+		} else {
+			p_ptt = NULL;
+		}
+		rc = ecore_sp_pf_update_tunn_cfg(p_hwfn, p_ptt,
+				&tunn, ECORE_SPQ_MODE_CB, NULL);
+		if (rc != ECORE_SUCCESS) {
+			DP_ERR(edev, "Failed to update tunn_clss %u\n",
+					tunn.vxlan.tun_cls);
+			if (IS_PF(edev))
+				ecore_ptt_release(p_hwfn, p_ptt);
+			break;
+		}
+	}
+
+	if (rc == ECORE_SUCCESS) {
+		qdev->vxlan.enable = enable;
+		qdev->vxlan.udp_port = (enable) ? QEDE_VXLAN_DEF_PORT : 0;
+		DP_INFO(edev, "vxlan is %s\n", enable ? "enabled" : "disabled");
+	}
+
+	return rc;
 }
 
 static int
@@ -571,6 +674,7 @@ qede_ucast_filter(struct rte_eth_dev *eth_dev, struct ecore_filter_ucast *ucast,
 		SLIST_FOREACH(tmp, &qdev->uc_list_head, list) {
 			if ((memcmp(mac_addr, &tmp->mac,
 				    ETHER_ADDR_LEN) == 0) &&
+			     ucast->vni == tmp->vni &&
 			     ucast->vlan == tmp->vlan) {
 				DP_ERR(edev, "Unicast MAC is already added"
 				       " with vlan = %u, vni = %u\n",
@@ -917,7 +1021,7 @@ static int qede_vlan_filter_set(struct rte_eth_dev *eth_dev,
 	return rc;
 }
 
-static void qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
+static int qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 {
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
@@ -955,6 +1059,8 @@ static void qede_vlan_offload_set(struct rte_eth_dev *eth_dev, int mask)
 
 	DP_INFO(edev, "vlan offload mask %d vlan-strip %d vlan-filter %d\n",
 		mask, rxmode->hw_vlan_strip, rxmode->hw_vlan_filter);
+
+	return 0;
 }
 
 static void qede_prandom_bytes(uint32_t *buff)
@@ -1020,6 +1126,7 @@ static void qede_fastpath_start(struct ecore_dev *edev)
 
 static int qede_dev_start(struct rte_eth_dev *eth_dev)
 {
+	struct rte_eth_rxmode *rxmode = &eth_dev->data->dev_conf.rxmode;
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
 
@@ -1030,10 +1137,15 @@ static int qede_dev_start(struct rte_eth_dev *eth_dev)
 		if (qede_update_mtu(eth_dev, qdev->new_mtu))
 			goto err;
 		qdev->mtu = qdev->new_mtu;
-		/* If MTU has changed then update TPA too */
-		if (qdev->enable_lro)
-			if (qede_enable_tpa(eth_dev, true))
-				goto err;
+	}
+
+	/* Configure TPA parameters */
+	if (rxmode->enable_lro) {
+		if (qede_enable_tpa(eth_dev, true))
+			return -EINVAL;
+		/* Enable scatter mode for LRO */
+		if (!rxmode->enable_scatter)
+			eth_dev->data->scattered_rx = 1;
 	}
 
 	/* Start queues */
@@ -1045,7 +1157,7 @@ static int qede_dev_start(struct rte_eth_dev *eth_dev)
 	 * Also, we would like to retain similar behavior in PF case, so we
 	 * don't do PF/VF specific check here.
 	 */
-	if (eth_dev->data->dev_conf.rxmode.mq_mode == ETH_MQ_RX_RSS)
+	if (rxmode->mq_mode == ETH_MQ_RX_RSS)
 		if (qede_config_rss(eth_dev))
 			goto err;
 
@@ -1055,6 +1167,9 @@ static int qede_dev_start(struct rte_eth_dev *eth_dev)
 
 	/* Bring-up the link */
 	qede_dev_set_link_state(eth_dev, true);
+
+	/* Update link status */
+	qede_link_update(eth_dev, 0);
 
 	/* Start/resume traffic */
 	qede_fastpath_start(edev);
@@ -1081,7 +1196,6 @@ static void qede_dev_stop(struct rte_eth_dev *eth_dev)
 	if (qdev->enable_lro)
 		qede_enable_tpa(eth_dev, false);
 
-	/* TODO: Do we need disable LRO or RSS */
 	/* Stop queues */
 	qede_stop_queues(eth_dev);
 
@@ -1099,11 +1213,12 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
 	struct rte_eth_rxmode *rxmode = &eth_dev->data->dev_conf.rxmode;
+	int ret;
 
 	PMD_INIT_FUNC_TRACE(edev);
 
 	/* Check requirements for 100G mode */
-	if (edev->num_hwfns > 1) {
+	if (ECORE_IS_CMT(edev)) {
 		if (eth_dev->data->nb_rx_queues < 2 ||
 				eth_dev->data->nb_tx_queues < 2) {
 			DP_ERR(edev, "100G mode needs min. 2 RX/TX queues\n");
@@ -1121,8 +1236,10 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 	/* Sanity checks and throw warnings */
 	if (rxmode->enable_scatter)
 		eth_dev->data->scattered_rx = 1;
+
 	if (!rxmode->hw_strip_crc)
 		DP_INFO(edev, "L2 CRC stripping is always enabled in hw\n");
+
 	if (!rxmode->hw_ip_checksum)
 		DP_INFO(edev, "IP/UDP/TCP checksum offload is always enabled "
 				"in hw\n");
@@ -1143,7 +1260,7 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 	 * again and the fastpath pointers will be reinitialized there.
 	 */
 	if (qdev->num_tx_queues != eth_dev->data->nb_tx_queues ||
-			qdev->num_rx_queues != eth_dev->data->nb_rx_queues) {
+	    qdev->num_rx_queues != eth_dev->data->nb_rx_queues) {
 		qede_dealloc_fp_resc(eth_dev);
 		/* Proceed with updated queue count */
 		qdev->num_tx_queues = eth_dev->data->nb_tx_queues;
@@ -1166,20 +1283,12 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 	qdev->mtu = rxmode->max_rx_pkt_len;
 	qdev->new_mtu = qdev->mtu;
 
-	/* Configure TPA parameters */
-	if (rxmode->enable_lro) {
-		if (qede_enable_tpa(eth_dev, true))
-			return -EINVAL;
-		/* Enable scatter mode for LRO */
-		if (!rxmode->enable_scatter)
-			eth_dev->data->scattered_rx = 1;
-	}
-	qdev->enable_lro = rxmode->enable_lro;
-
 	/* Enable VLAN offloads by default */
-	qede_vlan_offload_set(eth_dev, ETH_VLAN_STRIP_MASK  |
+	ret = qede_vlan_offload_set(eth_dev, ETH_VLAN_STRIP_MASK  |
 			ETH_VLAN_FILTER_MASK |
 			ETH_VLAN_EXTEND_MASK);
+	if (ret)
+		return ret;
 
 	DP_INFO(edev, "Device configured with RSS=%d TSS=%d\n",
 			QEDE_RSS_COUNT(qdev), QEDE_TSS_COUNT(qdev));
@@ -1189,13 +1298,13 @@ static int qede_dev_configure(struct rte_eth_dev *eth_dev)
 
 /* Info about HW descriptor ring limitations */
 static const struct rte_eth_desc_lim qede_rx_desc_lim = {
-	.nb_max = NUM_RX_BDS_MAX,
+	.nb_max = 0x8000, /* 32K */
 	.nb_min = 128,
 	.nb_align = 128 /* lowest common multiple */
 };
 
 static const struct rte_eth_desc_lim qede_tx_desc_lim = {
-	.nb_max = NUM_TX_BDS_MAX,
+	.nb_max = 0x8000, /* 32K */
 	.nb_min = 256,
 	.nb_align = 256,
 	.nb_seg_max = ETH_TX_MAX_BDS_PER_LSO_PACKET,
@@ -1270,7 +1379,7 @@ qede_dev_info_get(struct rte_eth_dev *eth_dev,
 }
 
 /* return 0 means link status changed, -1 means not changed */
-static int
+int
 qede_link_update(struct rte_eth_dev *eth_dev, __rte_unused int wait_to_complete)
 {
 	struct qede_dev *qdev = eth_dev->data->dev_private;
@@ -1373,7 +1482,6 @@ static void qede_dev_close(struct rte_eth_dev *eth_dev)
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
-	uint8_t i;
 
 	PMD_INIT_FUNC_TRACE(edev);
 
@@ -1389,12 +1497,6 @@ static void qede_dev_close(struct rte_eth_dev *eth_dev)
 	qede_fdir_dealloc_resc(eth_dev);
 	qede_dealloc_fp_resc(eth_dev);
 
-	for (i = 0; i < eth_dev->data->nb_rx_queues; i++)
-		if (eth_dev->data->rx_queues[i])
-			eth_dev->data->rx_queues[i] = NULL;
-	for (i = 0; i < eth_dev->data->nb_tx_queues; i++)
-		if (eth_dev->data->tx_queues[i])
-			eth_dev->data->tx_queues[i] = NULL;
 	eth_dev->data->nb_rx_queues = 0;
 	eth_dev->data->nb_tx_queues = 0;
 
@@ -1403,11 +1505,11 @@ static void qede_dev_close(struct rte_eth_dev *eth_dev)
 	rte_intr_disable(&pci_dev->intr_handle);
 	rte_intr_callback_unregister(&pci_dev->intr_handle,
 				     qede_interrupt_handler, (void *)eth_dev);
-	if (edev->num_hwfns > 1)
+	if (ECORE_IS_CMT(edev))
 		rte_eal_alarm_cancel(qede_poll_sp_sb_cb, (void *)eth_dev);
 }
 
-static void
+static int
 qede_get_stats(struct rte_eth_dev *eth_dev, struct rte_eth_stats *eth_stats)
 {
 	struct qede_dev *qdev = eth_dev->data->dev_private;
@@ -1420,32 +1522,33 @@ qede_get_stats(struct rte_eth_dev *eth_dev, struct rte_eth_stats *eth_stats)
 	ecore_get_vport_stats(edev, &stats);
 
 	/* RX Stats */
-	eth_stats->ipackets = stats.rx_ucast_pkts +
-	    stats.rx_mcast_pkts + stats.rx_bcast_pkts;
+	eth_stats->ipackets = stats.common.rx_ucast_pkts +
+	    stats.common.rx_mcast_pkts + stats.common.rx_bcast_pkts;
 
-	eth_stats->ibytes = stats.rx_ucast_bytes +
-	    stats.rx_mcast_bytes + stats.rx_bcast_bytes;
+	eth_stats->ibytes = stats.common.rx_ucast_bytes +
+	    stats.common.rx_mcast_bytes + stats.common.rx_bcast_bytes;
 
-	eth_stats->ierrors = stats.rx_crc_errors +
-	    stats.rx_align_errors +
-	    stats.rx_carrier_errors +
-	    stats.rx_oversize_packets +
-	    stats.rx_jabbers + stats.rx_undersize_packets;
+	eth_stats->ierrors = stats.common.rx_crc_errors +
+	    stats.common.rx_align_errors +
+	    stats.common.rx_carrier_errors +
+	    stats.common.rx_oversize_packets +
+	    stats.common.rx_jabbers + stats.common.rx_undersize_packets;
 
-	eth_stats->rx_nombuf = stats.no_buff_discards;
+	eth_stats->rx_nombuf = stats.common.no_buff_discards;
 
-	eth_stats->imissed = stats.mftag_filter_discards +
-	    stats.mac_filter_discards +
-	    stats.no_buff_discards + stats.brb_truncates + stats.brb_discards;
+	eth_stats->imissed = stats.common.mftag_filter_discards +
+	    stats.common.mac_filter_discards +
+	    stats.common.no_buff_discards +
+	    stats.common.brb_truncates + stats.common.brb_discards;
 
 	/* TX stats */
-	eth_stats->opackets = stats.tx_ucast_pkts +
-	    stats.tx_mcast_pkts + stats.tx_bcast_pkts;
+	eth_stats->opackets = stats.common.tx_ucast_pkts +
+	    stats.common.tx_mcast_pkts + stats.common.tx_bcast_pkts;
 
-	eth_stats->obytes = stats.tx_ucast_bytes +
-	    stats.tx_mcast_bytes + stats.tx_bcast_bytes;
+	eth_stats->obytes = stats.common.tx_ucast_bytes +
+	    stats.common.tx_mcast_bytes + stats.common.tx_bcast_bytes;
 
-	eth_stats->oerrors = stats.tx_err_drop_pkts;
+	eth_stats->oerrors = stats.common.tx_err_drop_pkts;
 
 	/* Queue stats */
 	rxq_stat_cntrs = RTE_MIN(QEDE_RSS_COUNT(qdev),
@@ -1490,14 +1593,24 @@ qede_get_stats(struct rte_eth_dev *eth_dev, struct rte_eth_stats *eth_stats)
 		if (j == txq_stat_cntrs)
 			break;
 	}
+
+	return 0;
 }
 
 static unsigned
 qede_get_xstats_count(struct qede_dev *qdev) {
-	return RTE_DIM(qede_xstats_strings) +
-		(RTE_DIM(qede_rxq_xstats_strings) *
-		 RTE_MIN(QEDE_RSS_COUNT(qdev),
-			 RTE_ETHDEV_QUEUE_STAT_CNTRS));
+	if (ECORE_IS_BB(&qdev->edev))
+		return RTE_DIM(qede_xstats_strings) +
+		       RTE_DIM(qede_bb_xstats_strings) +
+		       (RTE_DIM(qede_rxq_xstats_strings) *
+			RTE_MIN(QEDE_RSS_COUNT(qdev),
+				RTE_ETHDEV_QUEUE_STAT_CNTRS));
+	else
+		return RTE_DIM(qede_xstats_strings) +
+		       RTE_DIM(qede_ah_xstats_strings) +
+		       (RTE_DIM(qede_rxq_xstats_strings) *
+			RTE_MIN(QEDE_RSS_COUNT(qdev),
+				RTE_ETHDEV_QUEUE_STAT_CNTRS));
 }
 
 static int
@@ -1506,6 +1619,7 @@ qede_get_xstats_names(struct rte_eth_dev *dev,
 		      __rte_unused unsigned int limit)
 {
 	struct qede_dev *qdev = dev->data->dev_private;
+	struct ecore_dev *edev = &qdev->edev;
 	const unsigned int stat_cnt = qede_get_xstats_count(qdev);
 	unsigned int i, qid, stat_idx = 0;
 	unsigned int rxq_stat_cntrs;
@@ -1517,6 +1631,24 @@ qede_get_xstats_names(struct rte_eth_dev *dev,
 				"%s",
 				qede_xstats_strings[i].name);
 			stat_idx++;
+		}
+
+		if (ECORE_IS_BB(edev)) {
+			for (i = 0; i < RTE_DIM(qede_bb_xstats_strings); i++) {
+				snprintf(xstats_names[stat_idx].name,
+					sizeof(xstats_names[stat_idx].name),
+					"%s",
+					qede_bb_xstats_strings[i].name);
+				stat_idx++;
+			}
+		} else {
+			for (i = 0; i < RTE_DIM(qede_ah_xstats_strings); i++) {
+				snprintf(xstats_names[stat_idx].name,
+					sizeof(xstats_names[stat_idx].name),
+					"%s",
+					qede_ah_xstats_strings[i].name);
+				stat_idx++;
+			}
 		}
 
 		rxq_stat_cntrs = RTE_MIN(QEDE_RSS_COUNT(qdev),
@@ -1557,6 +1689,24 @@ qede_get_xstats(struct rte_eth_dev *dev, struct rte_eth_xstat *xstats,
 					     qede_xstats_strings[i].offset);
 		xstats[stat_idx].id = stat_idx;
 		stat_idx++;
+	}
+
+	if (ECORE_IS_BB(edev)) {
+		for (i = 0; i < RTE_DIM(qede_bb_xstats_strings); i++) {
+			xstats[stat_idx].value =
+					*(uint64_t *)(((char *)&stats) +
+					qede_bb_xstats_strings[i].offset);
+			xstats[stat_idx].id = stat_idx;
+			stat_idx++;
+		}
+	} else {
+		for (i = 0; i < RTE_DIM(qede_ah_xstats_strings); i++) {
+			xstats[stat_idx].value =
+					*(uint64_t *)(((char *)&stats) +
+					qede_ah_xstats_strings[i].offset);
+			xstats[stat_idx].id = stat_idx;
+			stat_idx++;
+		}
 	}
 
 	rxq_stat_cntrs = RTE_MIN(QEDE_RSS_COUNT(qdev),
@@ -1707,8 +1857,22 @@ static const uint32_t *
 qede_dev_supported_ptypes_get(struct rte_eth_dev *eth_dev)
 {
 	static const uint32_t ptypes[] = {
+		RTE_PTYPE_L2_ETHER,
+		RTE_PTYPE_L2_ETHER_VLAN,
 		RTE_PTYPE_L3_IPV4,
 		RTE_PTYPE_L3_IPV6,
+		RTE_PTYPE_L4_TCP,
+		RTE_PTYPE_L4_UDP,
+		RTE_PTYPE_TUNNEL_VXLAN,
+		RTE_PTYPE_L4_FRAG,
+		/* Inner */
+		RTE_PTYPE_INNER_L2_ETHER,
+		RTE_PTYPE_INNER_L2_ETHER_VLAN,
+		RTE_PTYPE_INNER_L3_IPV4,
+		RTE_PTYPE_INNER_L3_IPV6,
+		RTE_PTYPE_INNER_L4_TCP,
+		RTE_PTYPE_INNER_L4_UDP,
+		RTE_PTYPE_INNER_L4_FRAG,
 		RTE_PTYPE_UNKNOWN
 	};
 
@@ -1913,6 +2077,10 @@ int qede_rss_reta_update(struct rte_eth_dev *eth_dev,
 	memset(&vport_update_params, 0, sizeof(vport_update_params));
 	params = rte_zmalloc("qede_rss", sizeof(*params) * edev->num_hwfns,
 			     RTE_CACHE_LINE_SIZE);
+	if (params == NULL) {
+		DP_ERR(edev, "failed to allocate memory\n");
+		return -ENOMEM;
+	}
 
 	for (i = 0; i < reta_size; i++) {
 		idx = i / RTE_RETA_GROUP_SIZE;
@@ -1932,7 +2100,7 @@ int qede_rss_reta_update(struct rte_eth_dev *eth_dev,
 	params->update_rss_config = 1;
 
 	/* Fix up RETA for CMT mode device */
-	if (edev->num_hwfns > 1)
+	if (ECORE_IS_CMT(edev))
 		qdev->rss_enable = qede_update_rss_parm_cmt(edev,
 							    params);
 	vport_update_params.vport_id = 0;
@@ -2053,25 +2221,76 @@ qede_conf_udp_dst_port(struct rte_eth_dev *eth_dev,
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
 	struct ecore_tunnel_info tunn; /* @DPDK */
 	struct ecore_hwfn *p_hwfn;
+	struct ecore_ptt *p_ptt;
+	uint16_t udp_port;
 	int rc, i;
 
 	PMD_INIT_FUNC_TRACE(edev);
 
 	memset(&tunn, 0, sizeof(tunn));
 	if (tunnel_udp->prot_type == RTE_TUNNEL_TYPE_VXLAN) {
+		/* Enable VxLAN tunnel if needed before UDP port update using
+		 * default MAC/VLAN classification.
+		 */
+		if (add) {
+			if (qdev->vxlan.udp_port == tunnel_udp->udp_port) {
+				DP_INFO(edev,
+					"UDP port %u was already configured\n",
+					tunnel_udp->udp_port);
+				return ECORE_SUCCESS;
+			}
+			/* Enable VXLAN if it was not enabled while adding
+			 * VXLAN filter.
+			 */
+			if (!qdev->vxlan.enable) {
+				rc = qede_vxlan_enable(eth_dev,
+					ECORE_TUNN_CLSS_MAC_VLAN, true, true);
+				if (rc != ECORE_SUCCESS) {
+					DP_ERR(edev, "Failed to enable VXLAN "
+						"prior to updating UDP port\n");
+					return rc;
+				}
+			}
+			udp_port = tunnel_udp->udp_port;
+		} else {
+			if (qdev->vxlan.udp_port != tunnel_udp->udp_port) {
+				DP_ERR(edev, "UDP port %u doesn't exist\n",
+					tunnel_udp->udp_port);
+				return ECORE_INVAL;
+			}
+			udp_port = 0;
+		}
+
 		tunn.vxlan_port.b_update_port = true;
-		tunn.vxlan_port.port = (add) ? tunnel_udp->udp_port :
-						  QEDE_VXLAN_DEF_PORT;
+		tunn.vxlan_port.port = udp_port;
 		for_each_hwfn(edev, i) {
 			p_hwfn = &edev->hwfns[i];
-			rc = ecore_sp_pf_update_tunn_cfg(p_hwfn, &tunn,
+			if (IS_PF(edev)) {
+				p_ptt = ecore_ptt_acquire(p_hwfn);
+				if (!p_ptt)
+					return -EAGAIN;
+			} else {
+				p_ptt = NULL;
+			}
+			rc = ecore_sp_pf_update_tunn_cfg(p_hwfn, p_ptt, &tunn,
 						ECORE_SPQ_MODE_CB, NULL);
 			if (rc != ECORE_SUCCESS) {
 				DP_ERR(edev, "Unable to config UDP port %u\n",
 				       tunn.vxlan_port.port);
+				if (IS_PF(edev))
+					ecore_ptt_release(p_hwfn, p_ptt);
 				return rc;
 			}
 		}
+
+		qdev->vxlan.udp_port = udp_port;
+		/* If the request is to delete UDP port and if the number of
+		 * VXLAN filters have reached 0 then VxLAN offload can be be
+		 * disabled.
+		 */
+		if (!add && qdev->vxlan.enable && qdev->vxlan.num_filters == 0)
+			return qede_vxlan_enable(eth_dev,
+					ECORE_TUNN_CLSS_MAC_VLAN, false, true);
 	}
 
 	return 0;
@@ -2161,33 +2380,38 @@ static int qede_vxlan_tunn_config(struct rte_eth_dev *eth_dev,
 {
 	struct qede_dev *qdev = QEDE_INIT_QDEV(eth_dev);
 	struct ecore_dev *edev = QEDE_INIT_EDEV(qdev);
-	struct ecore_tunnel_info tunn;
-	struct ecore_hwfn *p_hwfn;
 	enum ecore_filter_ucast_type type;
-	enum ecore_tunn_clss clss;
-	struct ecore_filter_ucast ucast;
+	enum ecore_tunn_clss clss = MAX_ECORE_TUNN_CLSS;
+	struct ecore_filter_ucast ucast = {0};
 	char str[80];
-	uint16_t filter_type;
-	int rc, i;
+	uint16_t filter_type = 0;
+	int rc;
 
-	filter_type = conf->filter_type | qdev->vxlan_filter_type;
-	/* First determine if the given filter classification is supported */
-	qede_get_ecore_tunn_params(filter_type, &type, &clss, str);
-	if (clss == MAX_ECORE_TUNN_CLSS) {
-		DP_ERR(edev, "Wrong filter type\n");
-		return -EINVAL;
-	}
-	/* Init tunnel ucast params */
-	rc = qede_set_ucast_tunn_cmn_param(&ucast, conf, type);
-	if (rc != ECORE_SUCCESS) {
-		DP_ERR(edev, "Unsupported VxLAN filter type 0x%x\n",
-				conf->filter_type);
-		return rc;
-	}
-	DP_INFO(edev, "Rule: \"%s\", op %d, type 0x%x\n",
-		str, filter_op, ucast.type);
+	PMD_INIT_FUNC_TRACE(edev);
+
 	switch (filter_op) {
 	case RTE_ETH_FILTER_ADD:
+		if (IS_VF(edev))
+			return qede_vxlan_enable(eth_dev,
+					ECORE_TUNN_CLSS_MAC_VLAN, true, true);
+
+		filter_type = conf->filter_type;
+		/* Determine if the given filter classification is supported */
+		qede_get_ecore_tunn_params(filter_type, &type, &clss, str);
+		if (clss == MAX_ECORE_TUNN_CLSS) {
+			DP_ERR(edev, "Unsupported filter type\n");
+			return -EINVAL;
+		}
+		/* Init tunnel ucast params */
+		rc = qede_set_ucast_tunn_cmn_param(&ucast, conf, type);
+		if (rc != ECORE_SUCCESS) {
+			DP_ERR(edev, "Unsupported VxLAN filter type 0x%x\n",
+			conf->filter_type);
+			return rc;
+		}
+		DP_INFO(edev, "Rule: \"%s\", op %d, type 0x%x\n",
+			str, filter_op, ucast.type);
+
 		ucast.opcode = ECORE_FILTER_ADD;
 
 		/* Skip MAC/VLAN if filter is based on VNI */
@@ -2207,22 +2431,34 @@ static int qede_vxlan_tunn_config(struct rte_eth_dev *eth_dev,
 		if (rc != ECORE_SUCCESS)
 			return rc;
 
-		qdev->vxlan_filter_type = filter_type;
+		qdev->vxlan.num_filters++;
+		qdev->vxlan.filter_type = filter_type;
+		if (!qdev->vxlan.enable)
+			return qede_vxlan_enable(eth_dev, clss, true, true);
 
-		DP_INFO(edev, "Enabling VXLAN tunneling\n");
-		qede_set_cmn_tunn_param(&tunn, clss, true, true);
-		for_each_hwfn(edev, i) {
-			p_hwfn = &edev->hwfns[i];
-			rc = ecore_sp_pf_update_tunn_cfg(p_hwfn,
-				&tunn, ECORE_SPQ_MODE_CB, NULL);
-			if (rc != ECORE_SUCCESS) {
-				DP_ERR(edev, "Failed to update tunn_clss %u\n",
-				       tunn.vxlan.tun_cls);
-			}
-		}
-		qdev->num_tunn_filters++; /* Filter added successfully */
 	break;
 	case RTE_ETH_FILTER_DELETE:
+		if (IS_VF(edev))
+			return qede_vxlan_enable(eth_dev,
+				ECORE_TUNN_CLSS_MAC_VLAN, false, true);
+
+		filter_type = conf->filter_type;
+		/* Determine if the given filter classification is supported */
+		qede_get_ecore_tunn_params(filter_type, &type, &clss, str);
+		if (clss == MAX_ECORE_TUNN_CLSS) {
+			DP_ERR(edev, "Unsupported filter type\n");
+			return -EINVAL;
+		}
+		/* Init tunnel ucast params */
+		rc = qede_set_ucast_tunn_cmn_param(&ucast, conf, type);
+		if (rc != ECORE_SUCCESS) {
+			DP_ERR(edev, "Unsupported VxLAN filter type 0x%x\n",
+			conf->filter_type);
+			return rc;
+		}
+		DP_INFO(edev, "Rule: \"%s\", op %d, type 0x%x\n",
+			str, filter_op, ucast.type);
+
 		ucast.opcode = ECORE_FILTER_REMOVE;
 
 		if (!(filter_type & ETH_TUNNEL_FILTER_TENID)) {
@@ -2236,33 +2472,16 @@ static int qede_vxlan_tunn_config(struct rte_eth_dev *eth_dev,
 		if (rc != ECORE_SUCCESS)
 			return rc;
 
-		qdev->vxlan_filter_type = filter_type;
-		qdev->num_tunn_filters--;
+		qdev->vxlan.num_filters--;
 
 		/* Disable VXLAN if VXLAN filters become 0 */
-		if (qdev->num_tunn_filters == 0) {
-			DP_INFO(edev, "Disabling VXLAN tunneling\n");
-
-			/* Use 0 as tunnel mode */
-			qede_set_cmn_tunn_param(&tunn, clss, false, true);
-			for_each_hwfn(edev, i) {
-				p_hwfn = &edev->hwfns[i];
-				rc = ecore_sp_pf_update_tunn_cfg(p_hwfn, &tunn,
-					ECORE_SPQ_MODE_CB, NULL);
-				if (rc != ECORE_SUCCESS) {
-					DP_ERR(edev,
-						"Failed to update tunn_clss %u\n",
-						tunn.vxlan.tun_cls);
-					break;
-				}
-			}
-		}
+		if (qdev->vxlan.num_filters == 0)
+			return qede_vxlan_enable(eth_dev, clss, false, true);
 	break;
 	default:
 		DP_ERR(edev, "Unsupported operation %d\n", filter_op);
 		return -EINVAL;
 	}
-	DP_INFO(edev, "Current VXLAN filters %d\n", qdev->num_tunn_filters);
 
 	return 0;
 }
@@ -2390,6 +2609,8 @@ static const struct eth_dev_ops qede_eth_vf_dev_ops = {
 	.reta_update  = qede_rss_reta_update,
 	.reta_query  = qede_rss_reta_query,
 	.mtu_set = qede_set_mtu,
+	.udp_tunnel_port_add = qede_udp_dst_port_add,
+	.udp_tunnel_port_del = qede_udp_dst_port_del,
 };
 
 static void qede_update_pf_params(struct ecore_dev *edev)
@@ -2422,6 +2643,7 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 
 	/* Extract key data structures */
 	adapter = eth_dev->data->dev_private;
+	adapter->ethdev = eth_dev;
 	edev = &adapter->edev;
 	pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 	pci_addr = pci_dev->addr;
@@ -2437,8 +2659,7 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 	eth_dev->tx_pkt_prepare = qede_xmit_prep_pkts;
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
-		DP_NOTICE(edev, false,
-			  "Skipping device init from secondary process\n");
+		DP_ERR(edev, "Skipping device init from secondary process\n");
 		return 0;
 	}
 
@@ -2483,7 +2704,7 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 	 * This is required since uio device uses only one MSI-x
 	 * interrupt vector but we need one for each engine.
 	 */
-	if (edev->num_hwfns > 1 && IS_PF(edev)) {
+	if (ECORE_IS_CMT(edev) && IS_PF(edev)) {
 		rc = rte_eal_alarm_set(timer_period * US_PER_S,
 				       qede_poll_sp_sb_cb,
 				       (void *)eth_dev);
@@ -2561,8 +2782,7 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 				ether_addr_copy(&eth_dev->data->mac_addrs[0],
 						&adapter->primary_mac);
 			} else {
-				DP_NOTICE(edev, false,
-					  "No VF macaddr assigned\n");
+				DP_ERR(edev, "No VF macaddr assigned\n");
 			}
 		}
 	}
@@ -2587,13 +2807,13 @@ static int qede_common_dev_init(struct rte_eth_dev *eth_dev, bool is_vf)
 		if (qede_start_vport(adapter, adapter->mtu))
 			return -1;
 
-	DP_NOTICE(edev, false, "MAC address : %02x:%02x:%02x:%02x:%02x:%02x\n",
-		  adapter->primary_mac.addr_bytes[0],
-		  adapter->primary_mac.addr_bytes[1],
-		  adapter->primary_mac.addr_bytes[2],
-		  adapter->primary_mac.addr_bytes[3],
-		  adapter->primary_mac.addr_bytes[4],
-		  adapter->primary_mac.addr_bytes[5]);
+	DP_INFO(edev, "MAC address : %02x:%02x:%02x:%02x:%02x:%02x\n",
+		adapter->primary_mac.addr_bytes[0],
+		adapter->primary_mac.addr_bytes[1],
+		adapter->primary_mac.addr_bytes[2],
+		adapter->primary_mac.addr_bytes[3],
+		adapter->primary_mac.addr_bytes[4],
+		adapter->primary_mac.addr_bytes[5]);
 
 	DP_INFO(edev, "Device initialized\n");
 
@@ -2612,6 +2832,13 @@ static int qede_eth_dev_init(struct rte_eth_dev *eth_dev)
 
 static int qede_dev_common_uninit(struct rte_eth_dev *eth_dev)
 {
+#ifdef RTE_LIBRTE_QEDE_DEBUG_INIT
+	struct qede_dev *qdev = eth_dev->data->dev_private;
+	struct ecore_dev *edev = &qdev->edev;
+
+	PMD_INIT_FUNC_TRACE(edev);
+#endif
+
 	/* only uninitialize in the primary process */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;

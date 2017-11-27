@@ -36,6 +36,9 @@
 
 #include "rte_cryptodev_scheduler.h"
 
+#define CRYPTODEV_NAME_SCHEDULER_PMD	crypto_scheduler
+/**< Scheduler Crypto PMD device name */
+
 #define PER_SLAVE_BUFF_SIZE			(256)
 
 #define CS_LOG_ERR(fmt, args...)					\
@@ -63,7 +66,7 @@ struct scheduler_slave {
 	uint16_t qp_id;
 	uint32_t nb_inflight_cops;
 
-	enum rte_cryptodev_type dev_type;
+	uint8_t driver_id;
 };
 
 struct scheduler_ctx {
@@ -86,6 +89,8 @@ struct scheduler_ctx {
 
 	char name[RTE_CRYPTODEV_SCHEDULER_NAME_MAX_LEN];
 	char description[RTE_CRYPTODEV_SCHEDULER_DESC_MAX_LEN];
+	uint16_t wc_pool[RTE_CRYPTODEV_SCHEDULER_MAX_NB_WORKER_CORES];
+	uint16_t nb_wc;
 
 	char *init_slave_names[RTE_CRYPTODEV_SCHEDULER_MAX_NB_SLAVES];
 	int nb_init_slaves;
@@ -100,10 +105,8 @@ struct scheduler_qp_ctx {
 	uint32_t seqn;
 } __rte_cache_aligned;
 
-struct scheduler_session {
-	struct rte_cryptodev_sym_session *sessions[
-			RTE_CRYPTODEV_SCHEDULER_MAX_NB_SLAVES];
-};
+
+extern uint8_t cryptodev_driver_id;
 
 static __rte_always_inline uint16_t
 get_max_enqueue_order_count(struct rte_ring *order_ring, uint16_t nb_ops)

@@ -38,16 +38,13 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <inttypes.h>
-#include <inttypes.h>
 #include <sys/queue.h>
 #include <errno.h>
 #include <netinet/ip.h>
 
 #include <rte_common.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_eal.h>
-#include <rte_byteorder.h>
 #include <rte_launch.h>
 #include <rte_per_lcore.h>
 #include <rte_lcore.h>
@@ -61,7 +58,6 @@
 #include <rte_mbuf.h>
 #include <rte_ether.h>
 #include <rte_interrupts.h>
-#include <rte_pci.h>
 #include <rte_ethdev.h>
 #include <rte_byteorder.h>
 #include <rte_malloc.h>
@@ -97,7 +93,7 @@ struct efd_stats {
 static struct node_rx_buf *cl_rx_buf;
 
 static const char *
-get_printable_mac_addr(uint8_t port)
+get_printable_mac_addr(uint16_t port)
 {
 	static const char err_address[] = "00:00:00:00:00:00";
 	static char addresses[RTE_MAX_ETHPORTS][sizeof(err_address)];

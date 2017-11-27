@@ -73,11 +73,11 @@
 #define MAX_PKT_BURST           (32)
 #define DEF_PKT_BURST           (16)
 
-#define BONDED_DEV_NAME         ("unit_test_mode4_bond_dev")
+#define BONDED_DEV_NAME         ("net_bonding_m4_bond_dev")
 
-#define SLAVE_DEV_NAME_FMT      ("unit_test_mode4_slave_%d")
-#define SLAVE_RX_QUEUE_FMT      ("unit_test_mode4_slave_%d_rx")
-#define SLAVE_TX_QUEUE_FMT      ("unit_test_mode4_slave_%d_tx")
+#define SLAVE_DEV_NAME_FMT      ("net_virt_%d")
+#define SLAVE_RX_QUEUE_FMT      ("net_virt_%d_rx")
+#define SLAVE_TX_QUEUE_FMT      ("net_virt_%d_tx")
 
 #define INVALID_SOCKET_ID       (-1)
 #define INVALID_PORT_ID         (0xFF)
@@ -102,7 +102,7 @@ static const struct ether_addr slow_protocol_mac_addr = {
 struct slave_conf {
 	struct rte_ring *rx_queue;
 	struct rte_ring *tx_queue;
-	uint8_t port_id;
+	uint16_t port_id;
 	uint8_t bonded : 1;
 
 	uint8_t lacp_parnter_state;
@@ -235,7 +235,7 @@ free_pkts(struct rte_mbuf **pkts, uint16_t count)
 }
 
 static int
-configure_ethdev(uint8_t port_id, uint8_t start)
+configure_ethdev(uint16_t port_id, uint8_t start)
 {
 	TEST_ASSERT(rte_eth_dev_configure(port_id, 1, 1, &default_pmd_conf) == 0,
 		"Failed to configure device %u", port_id);
@@ -325,7 +325,7 @@ remove_slave(struct slave_conf *slave)
 }
 
 static void
-lacp_recv_cb(uint8_t slave_id, struct rte_mbuf *lacp_pkt)
+lacp_recv_cb(uint16_t slave_id, struct rte_mbuf *lacp_pkt)
 {
 	struct ether_hdr *hdr;
 	struct slow_protocol_frame *slow_hdr;
@@ -343,7 +343,7 @@ lacp_recv_cb(uint8_t slave_id, struct rte_mbuf *lacp_pkt)
 }
 
 static int
-initialize_bonded_device_with_slaves(uint8_t slave_count, uint8_t external_sm)
+initialize_bonded_device_with_slaves(uint16_t slave_count, uint8_t external_sm)
 {
 	uint8_t i;
 
@@ -379,8 +379,8 @@ remove_slaves_and_stop_bonded_device(void)
 {
 	struct slave_conf *slave;
 	int retval;
-	uint8_t slaves[RTE_MAX_ETHPORTS];
-	uint8_t i;
+	uint16_t slaves[RTE_MAX_ETHPORTS];
+	uint16_t i;
 
 	rte_eth_dev_stop(test_params.bonded_port_id);
 
@@ -411,7 +411,7 @@ test_setup(void)
 	char name[RTE_ETH_NAME_MAX_LEN];
 	struct slave_conf *port;
 	const uint8_t socket_id = rte_socket_id();
-	uint8_t i;
+	uint16_t i;
 
 	if (test_params.mbuf_pool == NULL) {
 		nb_mbuf_per_pool = TEST_RX_DESC_MAX + DEF_PKT_BURST +
@@ -661,7 +661,7 @@ bond_handshake(void)
 	TEST_ASSERT_EQUAL(all_slaves_done, 1, "Bond handshake failed\n");
 
 	/* If flags doesn't match - report failure */
-	return all_slaves_done = 1 ? TEST_SUCCESS : TEST_FAILED;
+	return all_slaves_done == 1 ? TEST_SUCCESS : TEST_FAILED;
 }
 
 #define TEST_LACP_SLAVE_COUT RTE_DIM(test_params.slave_ports)
@@ -676,6 +676,74 @@ test_mode4_lacp(void)
 	/* Test LACP handshake function */
 	retval = bond_handshake();
 	TEST_ASSERT_SUCCESS(retval, "Initial handshake failed");
+
+	retval = remove_slaves_and_stop_bonded_device();
+	TEST_ASSERT_SUCCESS(retval, "Test cleanup failed.");
+
+	return TEST_SUCCESS;
+}
+static int
+test_mode4_agg_mode_selection(void)
+{
+	int retval;
+	/* Test and verify for Stable mode */
+	retval = initialize_bonded_device_with_slaves(TEST_LACP_SLAVE_COUT, 0);
+	TEST_ASSERT_SUCCESS(retval, "Failed to initialize bonded device");
+
+
+	retval = rte_eth_bond_8023ad_agg_selection_set(
+			test_params.bonded_port_id, AGG_STABLE);
+	TEST_ASSERT_SUCCESS(retval, "Failed to initialize bond aggregation mode");
+	retval = bond_handshake();
+	TEST_ASSERT_SUCCESS(retval, "Initial handshake failed");
+
+
+	retval = rte_eth_bond_8023ad_agg_selection_get(
+			test_params.bonded_port_id);
+	TEST_ASSERT_EQUAL(retval, AGG_STABLE,
+			"Wrong agg mode received from bonding device");
+
+	retval = remove_slaves_and_stop_bonded_device();
+	TEST_ASSERT_SUCCESS(retval, "Test cleanup failed.");
+
+
+	/* test and verify for Bandwidth mode */
+	retval = initialize_bonded_device_with_slaves(TEST_LACP_SLAVE_COUT, 0);
+	TEST_ASSERT_SUCCESS(retval, "Failed to initialize bonded device");
+
+
+	retval = rte_eth_bond_8023ad_agg_selection_set(
+			test_params.bonded_port_id,
+			AGG_BANDWIDTH);
+	TEST_ASSERT_SUCCESS(retval,
+			"Failed to initialize bond aggregation mode");
+	retval = bond_handshake();
+	TEST_ASSERT_SUCCESS(retval, "Initial handshake failed");
+
+	retval = rte_eth_bond_8023ad_agg_selection_get(
+			test_params.bonded_port_id);
+	TEST_ASSERT_EQUAL(retval, AGG_BANDWIDTH,
+			"Wrong agg mode received from bonding device");
+
+	retval = remove_slaves_and_stop_bonded_device();
+	TEST_ASSERT_SUCCESS(retval, "Test cleanup failed.");
+
+	/* test and verify selection for count mode */
+	retval = initialize_bonded_device_with_slaves(TEST_LACP_SLAVE_COUT, 0);
+	TEST_ASSERT_SUCCESS(retval, "Failed to initialize bonded device");
+
+
+	retval = rte_eth_bond_8023ad_agg_selection_set(
+			test_params.bonded_port_id, AGG_COUNT);
+	TEST_ASSERT_SUCCESS(retval,
+			"Failed to initialize bond aggregation mode");
+	retval = bond_handshake();
+	TEST_ASSERT_SUCCESS(retval, "Initial handshake failed");
+
+	retval = rte_eth_bond_8023ad_agg_selection_get(
+			test_params.bonded_port_id);
+	TEST_ASSERT_EQUAL(retval, AGG_COUNT,
+			"Wrong agg mode received from bonding device");
 
 	retval = remove_slaves_and_stop_bonded_device();
 	TEST_ASSERT_SUCCESS(retval, "Test cleanup failed.");
@@ -1453,7 +1521,7 @@ check_environment(void)
 {
 	struct slave_conf *port;
 	uint8_t i, env_state;
-	uint8_t slaves[RTE_DIM(test_params.slave_ports)];
+	uint16_t slaves[RTE_DIM(test_params.slave_ports)];
 	int slaves_count;
 
 	env_state = 0;
@@ -1535,6 +1603,11 @@ test_mode4_executor(int (*test_func)(void))
 }
 
 static int
+test_mode4_agg_mode_selection_wrapper(void){
+	return test_mode4_executor(&test_mode4_agg_mode_selection);
+}
+
+static int
 test_mode4_lacp_wrapper(void)
 {
 	return test_mode4_executor(&test_mode4_lacp);
@@ -1581,6 +1654,8 @@ static struct unit_test_suite link_bonding_mode4_test_suite  = {
 	.setup = test_setup,
 	.teardown = testsuite_teardown,
 	.unit_test_cases = {
+		TEST_CASE_NAMED("test_mode4_agg_mode_selection",
+				test_mode4_agg_mode_selection_wrapper),
 		TEST_CASE_NAMED("test_mode4_lacp", test_mode4_lacp_wrapper),
 		TEST_CASE_NAMED("test_mode4_rx", test_mode4_rx_wrapper),
 		TEST_CASE_NAMED("test_mode4_tx_burst", test_mode4_tx_burst_wrapper),

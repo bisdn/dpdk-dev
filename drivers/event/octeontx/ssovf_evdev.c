@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright (C) Cavium networks Ltd. 2017.
+ *   Copyright (C) Cavium, Inc. 2017.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -13,7 +13,7 @@
  *       notice, this list of conditions and the following disclaimer in
  *       the documentation and/or other materials provided with the
  *       distribution.
- *     * Neither the name of Cavium networks nor the names of its
+ *     * Neither the name of Cavium, Inc nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -30,16 +30,19 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <inttypes.h>
+
 #include <rte_common.h>
 #include <rte_debug.h>
 #include <rte_dev.h>
 #include <rte_eal.h>
+#include <rte_ethdev.h>
+#include <rte_event_eth_rx_adapter.h>
 #include <rte_lcore.h>
 #include <rte_log.h>
 #include <rte_malloc.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
-#include <rte_vdev.h>
+#include <rte_bus_vdev.h>
 
 #include "ssovf_evdev.h"
 
@@ -153,9 +156,10 @@ ssovf_fastpath_fns_set(struct rte_eventdev *dev)
 {
 	struct ssovf_evdev *edev = ssovf_pmd_priv(dev);
 
-	dev->schedule      = NULL;
 	dev->enqueue       = ssows_enq;
 	dev->enqueue_burst = ssows_enq_burst;
+	dev->enqueue_new_burst = ssows_enq_new_burst;
+	dev->enqueue_forward_burst = ssows_enq_fwd_burst;
 	dev->dequeue       = ssows_deq;
 	dev->dequeue_burst = ssows_deq_burst;
 
@@ -170,6 +174,7 @@ ssovf_info_get(struct rte_eventdev *dev, struct rte_event_dev_info *dev_info)
 {
 	struct ssovf_evdev *edev = ssovf_pmd_priv(dev);
 
+	dev_info->driver_name = RTE_STR(EVENTDEV_NAME_OCTEONTX_PMD);
 	dev_info->min_dequeue_timeout_ns = edev->min_deq_timeout_ns;
 	dev_info->max_dequeue_timeout_ns = edev->max_deq_timeout_ns;
 	dev_info->max_event_queues = edev->max_event_queues;
@@ -194,6 +199,8 @@ ssovf_configure(const struct rte_eventdev *dev)
 
 	ssovf_func_trace();
 	deq_tmo_ns = conf->dequeue_timeout_ns;
+	if (deq_tmo_ns == 0)
+		deq_tmo_ns = edev->min_deq_timeout_ns;
 
 	if (conf->event_dev_cfg & RTE_EVENT_DEV_CFG_PER_DEQUEUE_TIMEOUT) {
 		edev->is_timeout_deq = 1;
@@ -388,6 +395,123 @@ ssows_dump(struct ssows *ws, FILE *f)
 	fprintf(f, "\tpwqp=0x%"PRIx64"\n", val);
 }
 
+static int
+ssovf_eth_rx_adapter_caps_get(const struct rte_eventdev *dev,
+		const struct rte_eth_dev *eth_dev, uint32_t *caps)
+{
+	int ret;
+	RTE_SET_USED(dev);
+
+	ret = strncmp(eth_dev->data->name, "eth_octeontx", 12);
+	if (ret)
+		*caps = RTE_EVENT_ETH_RX_ADAPTER_SW_CAP;
+	else
+		*caps = RTE_EVENT_ETH_RX_ADAPTER_CAP_INTERNAL_PORT;
+
+	return 0;
+}
+
+static int
+ssovf_eth_rx_adapter_queue_add(const struct rte_eventdev *dev,
+		const struct rte_eth_dev *eth_dev, int32_t rx_queue_id,
+		const struct rte_event_eth_rx_adapter_queue_conf *queue_conf)
+{
+	int ret = 0;
+	const struct octeontx_nic *nic = eth_dev->data->dev_private;
+	pki_mod_qos_t pki_qos;
+	RTE_SET_USED(dev);
+
+	ret = strncmp(eth_dev->data->name, "eth_octeontx", 12);
+	if (ret)
+		return -EINVAL;
+
+	if (rx_queue_id >= 0)
+		return -EINVAL;
+
+	if (queue_conf->ev.sched_type == RTE_SCHED_TYPE_PARALLEL)
+		return -ENOTSUP;
+
+	memset(&pki_qos, 0, sizeof(pki_mod_qos_t));
+
+	pki_qos.port_type = 0;
+	pki_qos.index = 0;
+	pki_qos.mmask.f_tag_type = 1;
+	pki_qos.mmask.f_port_add = 1;
+	pki_qos.mmask.f_grp_ok = 1;
+	pki_qos.mmask.f_grp_bad = 1;
+	pki_qos.mmask.f_grptag_ok = 1;
+	pki_qos.mmask.f_grptag_bad = 1;
+
+	pki_qos.tag_type = queue_conf->ev.sched_type;
+	pki_qos.qos_entry.port_add = 0;
+	pki_qos.qos_entry.ggrp_ok = queue_conf->ev.queue_id;
+	pki_qos.qos_entry.ggrp_bad = queue_conf->ev.queue_id;
+	pki_qos.qos_entry.grptag_bad = 0;
+	pki_qos.qos_entry.grptag_ok = 0;
+
+	ret = octeontx_pki_port_modify_qos(nic->port_id, &pki_qos);
+	if (ret < 0)
+		ssovf_log_err("failed to modify QOS, port=%d, q=%d",
+				nic->port_id, queue_conf->ev.queue_id);
+
+	return ret;
+}
+
+static int
+ssovf_eth_rx_adapter_queue_del(const struct rte_eventdev *dev,
+		const struct rte_eth_dev *eth_dev, int32_t rx_queue_id)
+{
+	int ret = 0;
+	const struct octeontx_nic *nic = eth_dev->data->dev_private;
+	pki_del_qos_t pki_qos;
+	RTE_SET_USED(dev);
+	RTE_SET_USED(rx_queue_id);
+
+	ret = strncmp(eth_dev->data->name, "eth_octeontx", 12);
+	if (ret)
+		return -EINVAL;
+
+	pki_qos.port_type = 0;
+	pki_qos.index = 0;
+	memset(&pki_qos, 0, sizeof(pki_del_qos_t));
+	ret = octeontx_pki_port_delete_qos(nic->port_id, &pki_qos);
+	if (ret < 0)
+		ssovf_log_err("Failed to delete QOS port=%d, q=%d",
+				nic->port_id, queue_conf->ev.queue_id);
+	return ret;
+}
+
+static int
+ssovf_eth_rx_adapter_start(const struct rte_eventdev *dev,
+					const struct rte_eth_dev *eth_dev)
+{
+	int ret;
+	const struct octeontx_nic *nic = eth_dev->data->dev_private;
+	RTE_SET_USED(dev);
+
+	ret = strncmp(eth_dev->data->name, "eth_octeontx", 12);
+	if (ret)
+		return 0;
+	octeontx_pki_port_start(nic->port_id);
+	return 0;
+}
+
+
+static int
+ssovf_eth_rx_adapter_stop(const struct rte_eventdev *dev,
+		const struct rte_eth_dev *eth_dev)
+{
+	int ret;
+	const struct octeontx_nic *nic = eth_dev->data->dev_private;
+	RTE_SET_USED(dev);
+
+	ret = strncmp(eth_dev->data->name, "eth_octeontx", 12);
+	if (ret)
+		return 0;
+	octeontx_pki_port_stop(nic->port_id);
+	return 0;
+}
+
 static void
 ssovf_dump(struct rte_eventdev *dev, FILE *f)
 {
@@ -481,6 +605,13 @@ static const struct rte_eventdev_ops ssovf_ops = {
 	.port_link        = ssovf_port_link,
 	.port_unlink      = ssovf_port_unlink,
 	.timeout_ticks    = ssovf_timeout_ticks,
+
+	.eth_rx_adapter_caps_get  = ssovf_eth_rx_adapter_caps_get,
+	.eth_rx_adapter_queue_add = ssovf_eth_rx_adapter_queue_add,
+	.eth_rx_adapter_queue_del = ssovf_eth_rx_adapter_queue_del,
+	.eth_rx_adapter_start = ssovf_eth_rx_adapter_start,
+	.eth_rx_adapter_stop = ssovf_eth_rx_adapter_stop,
+
 	.dump             = ssovf_dump,
 	.dev_start        = ssovf_start,
 	.dev_stop         = ssovf_stop,

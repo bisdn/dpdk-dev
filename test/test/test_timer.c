@@ -126,7 +126,6 @@
 #include <rte_common.h>
 #include <rte_log.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_launch.h>
 #include <rte_cycles.h>
 #include <rte_eal.h>
@@ -136,6 +135,7 @@
 #include <rte_timer.h>
 #include <rte_random.h>
 #include <rte_malloc.h>
+#include <rte_pause.h>
 
 #define TEST_DURATION_S 1 /* in seconds */
 #define NB_TIMER 4

@@ -36,7 +36,6 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <stdarg.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -76,6 +75,7 @@
 #include <rte_devargs.h>
 #include <rte_eth_ctrl.h>
 #include <rte_flow.h>
+#include <rte_gro.h>
 
 #include <cmdline_rdline.h>
 #include <cmdline_parse.h>
@@ -87,6 +87,7 @@
 #include <cmdline.h>
 #ifdef RTE_LIBRTE_PMD_BOND
 #include <rte_eth_bond.h>
+#include <rte_eth_bond_8023ad.h>
 #endif
 #ifdef RTE_LIBRTE_IXGBE_PMD
 #include <rte_pmd_ixgbe.h>
@@ -98,6 +99,8 @@
 #include <rte_pmd_bnxt.h>
 #endif
 #include "testpmd.h"
+#include "cmdline_mtr.h"
+#include "cmdline_tm.h"
 
 static struct cmdline *testpmd_cl;
 
@@ -221,11 +224,35 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"ddp get list (port_id)\n"
 			"    Get ddp profile info list\n\n"
 
+			"ddp get info (profile_path)\n"
+			"    Get ddp profile information.\n\n"
+
 			"show vf stats (port_id) (vf_id)\n"
 			"    Display a VF's statistics.\n\n"
 
 			"clear vf stats (port_id) (vf_id)\n"
 			"    Reset a VF's statistics.\n\n"
+
+			"show port (port_id) pctype mapping\n"
+			"    Get flow ptype to pctype mapping on a port\n\n"
+
+			"show port meter stats (port_id) (meter_id) (clear)\n"
+			"    Get meter stats on a port\n\n"
+                        "show port tm cap (port_id)\n"
+                        "       Display the port TM capability.\n\n"
+
+                        "show port tm level cap (port_id) (level_id)\n"
+                        "       Display the port TM hierarchical level capability.\n\n"
+
+                        "show port tm node cap (port_id) (node_id)\n"
+                        "       Display the port TM node capability.\n\n"
+
+                        "show port tm node type (port_id) (node_id)\n"
+                        "       Display the port TM node type.\n\n"
+
+                        "show port tm node stats (port_id) (node_id) (clear)\n"
+                        "       Display the port TM node stats.\n\n"
+
 		);
 	}
 
@@ -281,18 +308,15 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set tx loopback (port_id) (on|off)\n"
 			"    Enable or disable tx loopback.\n\n"
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 			"set all queues drop (port_id) (on|off)\n"
 			"    Set drop enable bit for all queues.\n\n"
 
 			"set vf split drop (port_id) (vf_id) (on|off)\n"
 			"    Set split drop enable bit for a VF from the PF.\n\n"
-#endif
 
 			"set vf mac antispoof (port_id) (vf_id) (on|off).\n"
 			"    Set MAC antispoof for a VF from the PF.\n\n"
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 			"set macsec offload (port_id) on encrypt (on|off) replay-protect (on|off)\n"
 			"    Enable MACsec offload.\n\n"
 
@@ -304,7 +328,6 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"set macsec sa (tx|rx) (port_id) (idx) (an) (pn) (key)\n"
 			"    Configure MACsec secure association (SA).\n\n"
-#endif
 
 			"set vf broadcast (port_id) (vf_id) (on|off)\n"
 			"    Set VF broadcast for a VF from the PF.\n\n"
@@ -423,6 +446,28 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"tso show (portid)"
 			"    Display the status of TCP Segmentation Offload.\n\n"
 
+			"set port (port_id) gro on|off\n"
+			"    Enable or disable Generic Receive Offload in"
+			" csum forwarding engine.\n\n"
+
+			"show port (port_id) gro\n"
+			"    Display GRO configuration.\n\n"
+
+			"set gro flush (cycles)\n"
+			"    Set the cycle to flush GROed packets from"
+			" reassembly tables.\n\n"
+
+			"set port (port_id) gso (on|off)"
+			"    Enable or disable Generic Segmentation Offload in"
+			" csum forwarding engine.\n\n"
+
+			"set gso segsz (length)\n"
+			"    Set max packet length for output GSO segments,"
+			" including packet header and payload.\n\n"
+
+			"show port (port_id) gso\n"
+			"    Show GSO configuration.\n\n"
+
 			"set fwd (%s)\n"
 			"    Set packet forwarding mode.\n\n"
 
@@ -480,6 +525,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			" queue on port.\n"
 			"    e.g., 'set stat_qmap rx 0 2 5' sets rx queue 2"
 			" on port 0 to mapping 5.\n\n"
+
+			"set xstats-hide-zero on|off\n"
+			"    Set the option to hide the zero values"
+			" for xstats display.\n"
 
 			"set port (port_id) vf (vf_id) rx|tx on|off\n"
 			"    Enable/Disable a VF receive/tranmit from a port\n\n"
@@ -571,11 +620,18 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set bonding mac_addr (port_id) (address)\n"
 			"	Set the MAC address of a bonded device.\n\n"
 
+			"set bonding mode IEEE802.3AD aggregator policy (port_id) (agg_name)"
+			"	Set Aggregation mode for IEEE802.3AD (mode 4)"
+
 			"set bonding xmit_balance_policy (port_id) (l2|l23|l34)\n"
 			"	Set the transmit balance policy for bonded device running in balance mode.\n\n"
 
 			"set bonding mon_period (port_id) (value)\n"
 			"	Set the bonding link status monitoring polling period in ms.\n\n"
+
+			"set bonding lacp dedicated_queues <port_id> (enable|disable)\n"
+			"	Enable/disable dedicated queues for LACP control traffic.\n\n"
+
 #endif
 			"set link-up port (port_id)\n"
 			"	Set link up for a port.\n\n"
@@ -604,8 +660,16 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"E-tag set filter del e-tag-id (value) port (port_id)\n"
 			"    Delete an E-tag forwarding filter on a port\n\n"
 
-			"ddp add (port_id) (profile_path)\n"
+#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
+			"set port tm hierarchy default (port_id)\n"
+			"	Set default traffic Management hierarchy on a port\n\n"
+
+#endif
+			"ddp add (port_id) (profile_path[,output_path])\n"
 			"    Load a profile package on a port\n\n"
+
+			"ddp del (port_id) (profile_path)\n"
+			"    Delete a profile package from a port\n\n"
 
 			"ptype mapping get (port_id) (valid_only)\n"
 			"    Get ptype mapping on a port\n\n"
@@ -618,6 +682,100 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"ptype mapping update (port_id) (hw_ptype) (sw_ptype)\n"
 			"    Update a ptype mapping item on a port\n\n"
+
+			"set port (port_id) queue-region region_id (value) "
+			"queue_start_index (value) queue_num (value)\n"
+			"    Set a queue region on a port\n\n"
+
+			"set port (port_id) queue-region region_id (value) "
+			"flowtype (value)\n"
+			"    Set a flowtype region index on a port\n\n"
+
+			"set port (port_id) queue-region UP (value) region_id (value)\n"
+			"    Set the mapping of User Priority to "
+			"queue region on a port\n\n"
+
+			"set port (port_id) queue-region flush (on|off)\n"
+			"    flush all queue region related configuration\n\n"
+
+			"add port meter profile srtcm_rfc2697 (port_id) (profile_id) (cir) (cbs) (ebs) (color_aware)\n"
+			"    meter profile add - srtcm rfc 2697\n\n"
+
+			"add port meter profile trtcm_rfc2698 (port_id) (profile_id) (cir) (pir) (cbs) (pbs)\n"
+			"    meter profile add - trtcm rfc 2698\n\n"
+
+			"add port meter profile trtcm_rfc4115 (port_id) (profile_id) (cir) (eir) (cbs) (ebs)\n"
+			"    meter profile add - trtcm rfc 4115\n\n"
+
+			"del port meter profile (port_id) (profile_id)\n"
+			"    meter profile delete\n\n"
+
+			"set port meter (port_id) (mtr_id) (profile_id) (g_action) (y_action) (r_action) (stats_mask) (shared)\n"
+			"    meter create\n\n"
+
+			"del port meter (port_id) (mtr_id)\n"
+			"    meter delete\n\n"
+
+			"set port meter profile (port_id) (mtr_id) (profile_id)\n"
+			"    meter update meter profile\n\n"
+
+			"set port meter policer action (port_id) (mtr_id) (color) (action)\n"
+			"    meter update policer action\n\n"
+
+			"set port meter stats mask (port_id) (mtr_id) (stats_mask)\n"
+			"    meter update stats\n\n"
+
+			"show port (port_id) queue-region\n"
+			"    show all queue region related configuration info\n\n"
+
+			"add port tm node shaper profile (port_id) (shaper_profile_id)"
+			" (tb_rate) (tb_size) (packet_length_adjust)\n"
+			"	Add port tm node private shaper profile.\n\n"
+
+			"del port tm node shaper profile (port_id) (shaper_profile_id)\n"
+			"	Delete port tm node private shaper profile.\n\n"
+
+			"add port tm node shared shaper (port_id) (shared_shaper_id)"
+			" (shaper_profile_id)\n"
+			"	Add/update port tm node shared shaper.\n\n"
+
+			"del port tm node shared shaper (port_id) (shared_shaper_id)\n"
+			"	Delete port tm node shared shaper.\n\n"
+
+			"set port tm node shaper profile (port_id) (node_id)"
+			" (shaper_profile_id)\n"
+			"	Set port tm node shaper profile.\n\n"
+
+			"add port tm node wred profile (port_id) (wred_profile_id)"
+			" (color_g) (min_th_g) (max_th_g) (maxp_inv_g) (wq_log2_g)"
+			" (color_y) (min_th_y) (max_th_y) (maxp_inv_y) (wq_log2_y)"
+			" (color_r) (min_th_r) (max_th_r) (maxp_inv_r) (wq_log2_r)\n"
+			"	Add port tm node wred profile.\n\n"
+
+			"del port tm node wred profile (port_id) (wred_profile_id)\n"
+			"	Delete port tm node wred profile.\n\n"
+
+			"add port tm nonleaf node (port_id) (node_id) (parent_node_id)"
+			" (priority) (weight) (level_id) (shaper_profile_id)"
+			" (n_sp_priorities) (stats_mask) (n_shared_shapers)"
+			" [(shared_shaper_id_0) (shared_shaper_id_1)...]\n"
+			"	Add port tm nonleaf node.\n\n"
+
+			"add port tm leaf node (port_id) (node_id) (parent_node_id)"
+			" (priority) (weight) (level_id) (shaper_profile_id)"
+			" (cman_mode) (wred_profile_id) (stats_mask) (n_shared_shapers)"
+			" [(shared_shaper_id_0) (shared_shaper_id_1)...]\n"
+			"	Add port tm leaf node.\n\n"
+
+			"del port tm node (port_id) (node_id)\n"
+			"	Delete port tm node.\n\n"
+
+			"set port tm node parent (port_id) (node_id) (parent_node_id)"
+			" (priority) (weight)\n"
+			"	Set port tm node parent.\n\n"
+
+			"port tm hierarchy commit (port_id) (clean_on_fail)\n"
+			"	Commit tm hierarchy.\n\n"
 
 			, list_pkt_forwarding_modes()
 		);
@@ -657,13 +815,14 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port config all max-pkt-len (value)\n"
 			"    Set the max packet length.\n\n"
 
-			"port config all (crc-strip|scatter|rx-cksum|hw-vlan|hw-vlan-filter|"
+			"port config all (crc-strip|scatter|rx-cksum|rx-timestamp|hw-vlan|hw-vlan-filter|"
 			"hw-vlan-strip|hw-vlan-extend|drop-en)"
 			" (on|off)\n"
 			"    Set crc-strip/scatter/rx-checksum/hardware-vlan/drop_en"
 			" for ports.\n\n"
 
-			"port config all rss (all|ip|tcp|udp|sctp|ether|port|vxlan|geneve|nvgre|none)\n"
+			"port config all rss (all|ip|tcp|udp|sctp|ether|port|vxlan|"
+			"geneve|nvgre|none|<flowtype_id>)\n"
 			"    Set the RSS mode.\n\n"
 
 			"port config port-id rss reta (hash,queue)[,(hash,queue)]\n"
@@ -698,6 +857,13 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"port config (port_id|all) l2-tunnel E-tag"
 			" (enable|disable)\n"
 			"    Enable/disable the E-tag support.\n\n"
+
+			"port config (port_id) pctype mapping reset\n"
+			"    Reset flow type to pctype mapping on a port\n\n"
+
+			"port config (port_id) pctype mapping update"
+			" (pctype_id_0[,pctype_id_1]*) (flow_type_id)\n"
+			"    Update a flow type to pctype mapping item on a port\n\n"
 		);
 	}
 
@@ -860,8 +1026,8 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"set_hash_input_set (port_id) (ipv4|ipv4-frag|"
 			"ipv4-tcp|ipv4-udp|ipv4-sctp|ipv4-other|ipv6|"
 			"ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|ipv6-other|"
-			"l2_payload) (ovlan|ivlan|src-ipv4|dst-ipv4|src-ipv6|"
-			"dst-ipv6|ipv4-tos|ipv4-proto|ipv6-tc|"
+			"l2_payload|<flowtype_id>) (ovlan|ivlan|src-ipv4|dst-ipv4|"
+			"src-ipv6|dst-ipv6|ipv4-tos|ipv4-proto|ipv6-tc|"
 			"ipv6-next-header|udp-src-port|udp-dst-port|"
 			"tcp-src-port|tcp-dst-port|sctp-src-port|"
 			"sctp-dst-port|sctp-veri-tag|udp-key|gre-key|fld-1st|"
@@ -954,6 +1120,8 @@ static void cmd_operate_port_parsed(void *parsed_result,
 		stop_port(RTE_PORT_ALL);
 	else if (!strcmp(res->name, "close"))
 		close_port(RTE_PORT_ALL);
+	else if (!strcmp(res->name, "reset"))
+		reset_port(RTE_PORT_ALL);
 	else
 		printf("Unknown parameter\n");
 }
@@ -963,14 +1131,14 @@ cmdline_parse_token_string_t cmd_operate_port_all_cmd =
 								"port");
 cmdline_parse_token_string_t cmd_operate_port_all_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_operate_port_result, name,
-						"start#stop#close");
+						"start#stop#close#reset");
 cmdline_parse_token_string_t cmd_operate_port_all_all =
 	TOKEN_STRING_INITIALIZER(struct cmd_operate_port_result, value, "all");
 
 cmdline_parse_inst_t cmd_operate_port = {
 	.f = cmd_operate_port_parsed,
 	.data = NULL,
-	.help_str = "port start|stop|close all: Start/Stop/Close all ports",
+	.help_str = "port start|stop|close all: Start/Stop/Close/Reset all ports",
 	.tokens = {
 		(void *)&cmd_operate_port_all_cmd,
 		(void *)&cmd_operate_port_all_port,
@@ -998,6 +1166,8 @@ static void cmd_operate_specific_port_parsed(void *parsed_result,
 		stop_port(res->value);
 	else if (!strcmp(res->name, "close"))
 		close_port(res->value);
+	else if (!strcmp(res->name, "reset"))
+		reset_port(res->value);
 	else
 		printf("Unknown parameter\n");
 }
@@ -1007,7 +1177,7 @@ cmdline_parse_token_string_t cmd_operate_specific_port_cmd =
 							keyword, "port");
 cmdline_parse_token_string_t cmd_operate_specific_port_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_operate_specific_port_result,
-						name, "start#stop#close");
+						name, "start#stop#close#reset");
 cmdline_parse_token_num_t cmd_operate_specific_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_operate_specific_port_result,
 							value, UINT8);
@@ -1015,7 +1185,7 @@ cmdline_parse_token_num_t cmd_operate_specific_port_id =
 cmdline_parse_inst_t cmd_operate_specific_port = {
 	.f = cmd_operate_specific_port_parsed,
 	.data = NULL,
-	.help_str = "port start|stop|close <port_id>: Start/Stop/Close port_id",
+	.help_str = "port start|stop|close <port_id>: Start/Stop/Close/Reset port_id",
 	.tokens = {
 		(void *)&cmd_operate_specific_port_cmd,
 		(void *)&cmd_operate_specific_port_port,
@@ -1070,7 +1240,7 @@ cmdline_parse_inst_t cmd_operate_attach_port = {
 struct cmd_operate_detach_port_result {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t keyword;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void cmd_operate_detach_port_parsed(void *parsed_result,
@@ -1093,7 +1263,7 @@ cmdline_parse_token_string_t cmd_operate_detach_port_keyword =
 			keyword, "detach");
 cmdline_parse_token_num_t cmd_operate_detach_port_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_operate_detach_port_result,
-			port_id, UINT8);
+			port_id, UINT16);
 
 cmdline_parse_inst_t cmd_operate_detach_port = {
 	.f = cmd_operate_detach_port_parsed,
@@ -1472,7 +1642,7 @@ struct cmd_config_mtu_result {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t keyword;
 	cmdline_fixed_string_t mtu;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t value;
 };
 
@@ -1500,7 +1670,7 @@ cmdline_parse_token_string_t cmd_config_mtu_mtu =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_mtu_result, keyword,
 				 "mtu");
 cmdline_parse_token_num_t cmd_config_mtu_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_config_mtu_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_config_mtu_result, port_id, UINT16);
 cmdline_parse_token_num_t cmd_config_mtu_value =
 	TOKEN_NUM_INITIALIZER(struct cmd_config_mtu_result, value, UINT16);
 
@@ -1562,6 +1732,15 @@ cmd_config_rx_mode_flag_parsed(void *parsed_result,
 			rx_mode.hw_ip_checksum = 1;
 		else if (!strcmp(res->value, "off"))
 			rx_mode.hw_ip_checksum = 0;
+		else {
+			printf("Unknown parameter\n");
+			return;
+		}
+	} else if (!strcmp(res->name, "rx-timestamp")) {
+		if (!strcmp(res->value, "on"))
+			rx_mode.hw_timestamp = 1;
+		else if (!strcmp(res->value, "off"))
+			rx_mode.hw_timestamp = 0;
 		else {
 			printf("Unknown parameter\n");
 			return;
@@ -1634,7 +1813,7 @@ cmdline_parse_token_string_t cmd_config_rx_mode_flag_all =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rx_mode_flag, all, "all");
 cmdline_parse_token_string_t cmd_config_rx_mode_flag_name =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rx_mode_flag, name,
-					"crc-strip#scatter#rx-cksum#hw-vlan#"
+					"crc-strip#scatter#rx-cksum#rx-timestamp#hw-vlan#"
 					"hw-vlan-filter#hw-vlan-strip#hw-vlan-extend");
 cmdline_parse_token_string_t cmd_config_rx_mode_flag_value =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rx_mode_flag, value,
@@ -1643,7 +1822,7 @@ cmdline_parse_token_string_t cmd_config_rx_mode_flag_value =
 cmdline_parse_inst_t cmd_config_rx_mode_flag = {
 	.f = cmd_config_rx_mode_flag_parsed,
 	.data = NULL,
-	.help_str = "port config all crc-strip|scatter|rx-cksum|hw-vlan|"
+	.help_str = "port config all crc-strip|scatter|rx-cksum|rx-timestamp|hw-vlan|"
 		"hw-vlan-filter|hw-vlan-strip|hw-vlan-extend on|off",
 	.tokens = {
 		(void *)&cmd_config_rx_mode_flag_port,
@@ -1670,7 +1849,7 @@ cmd_config_rss_parsed(void *parsed_result,
 			__attribute__((unused)) void *data)
 {
 	struct cmd_config_rss *res = parsed_result;
-	struct rte_eth_rss_conf rss_conf;
+	struct rte_eth_rss_conf rss_conf = { .rss_key_len = 0, };
 	int diag;
 	uint8_t i;
 
@@ -1698,6 +1877,9 @@ cmd_config_rss_parsed(void *parsed_result,
 		rss_conf.rss_hf = ETH_RSS_NVGRE;
 	else if (!strcmp(res->value, "none"))
 		rss_conf.rss_hf = 0;
+	else if (isdigit(res->value[0]) && atoi(res->value) > 0 &&
+						atoi(res->value) < 64)
+		rss_conf.rss_hf = 1ULL << atoi(res->value);
 	else {
 		printf("Unknown parameter\n");
 		return;
@@ -1721,14 +1903,13 @@ cmdline_parse_token_string_t cmd_config_rss_all =
 cmdline_parse_token_string_t cmd_config_rss_name =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rss, name, "rss");
 cmdline_parse_token_string_t cmd_config_rss_value =
-	TOKEN_STRING_INITIALIZER(struct cmd_config_rss, value,
-		"all#ip#tcp#udp#sctp#ether#port#vxlan#geneve#nvgre#none");
+	TOKEN_STRING_INITIALIZER(struct cmd_config_rss, value, NULL);
 
 cmdline_parse_inst_t cmd_config_rss = {
 	.f = cmd_config_rss_parsed,
 	.data = NULL,
 	.help_str = "port config all rss "
-		"all|ip|tcp|udp|sctp|ether|port|vxlan|geneve|nvgre|none",
+		"all|ip|tcp|udp|sctp|ether|port|vxlan|geneve|nvgre|none|<flowtype_id>",
 	.tokens = {
 		(void *)&cmd_config_rss_port,
 		(void *)&cmd_config_rss_keyword,
@@ -1743,7 +1924,7 @@ cmdline_parse_inst_t cmd_config_rss = {
 struct cmd_config_rss_hash_key {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t config;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t rss_hash_key;
 	cmdline_fixed_string_t rss_type;
 	cmdline_fixed_string_t key;
@@ -1825,7 +2006,7 @@ cmdline_parse_token_string_t cmd_config_rss_hash_key_config =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rss_hash_key, config,
 				 "config");
 cmdline_parse_token_num_t cmd_config_rss_hash_key_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_config_rss_hash_key, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_config_rss_hash_key, port_id, UINT16);
 cmdline_parse_token_string_t cmd_config_rss_hash_key_rss_hash_key =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rss_hash_key,
 				 rss_hash_key, "rss-hash-key");
@@ -1860,7 +2041,7 @@ cmdline_parse_inst_t cmd_config_rss_hash_key = {
 /* *** configure port rxq/txq start/stop *** */
 struct cmd_config_rxtx_queue {
 	cmdline_fixed_string_t port;
-	uint8_t portid;
+	portid_t portid;
 	cmdline_fixed_string_t rxtxq;
 	uint16_t qid;
 	cmdline_fixed_string_t opname;
@@ -1928,7 +2109,7 @@ cmd_config_rxtx_queue_parsed(void *parsed_result,
 cmdline_parse_token_string_t cmd_config_rxtx_queue_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rxtx_queue, port, "port");
 cmdline_parse_token_num_t cmd_config_rxtx_queue_portid =
-	TOKEN_NUM_INITIALIZER(struct cmd_config_rxtx_queue, portid, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_config_rxtx_queue, portid, UINT16);
 cmdline_parse_token_string_t cmd_config_rxtx_queue_rxtxq =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rxtx_queue, rxtxq, "rxq#txq");
 cmdline_parse_token_num_t cmd_config_rxtx_queue_qid =
@@ -1955,7 +2136,7 @@ cmdline_parse_inst_t cmd_config_rxtx_queue = {
 struct cmd_config_rss_reta {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t keyword;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t name;
 	cmdline_fixed_string_t list_name;
 	cmdline_fixed_string_t list_of_items;
@@ -2064,7 +2245,7 @@ cmdline_parse_token_string_t cmd_config_rss_reta_port =
 cmdline_parse_token_string_t cmd_config_rss_reta_keyword =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rss_reta, keyword, "config");
 cmdline_parse_token_num_t cmd_config_rss_reta_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_config_rss_reta, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_config_rss_reta, port_id, UINT16);
 cmdline_parse_token_string_t cmd_config_rss_reta_name =
 	TOKEN_STRING_INITIALIZER(struct cmd_config_rss_reta, name, "rss");
 cmdline_parse_token_string_t cmd_config_rss_reta_list_name =
@@ -2091,7 +2272,7 @@ cmdline_parse_inst_t cmd_config_rss_reta = {
 struct cmd_showport_reta {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t rss;
 	cmdline_fixed_string_t reta;
 	uint16_t size;
@@ -2146,12 +2327,14 @@ cmd_showport_reta_parsed(void *parsed_result,
 	struct cmd_showport_reta *res = parsed_result;
 	struct rte_eth_rss_reta_entry64 reta_conf[8];
 	struct rte_eth_dev_info dev_info;
+	uint16_t max_reta_size;
 
 	memset(&dev_info, 0, sizeof(dev_info));
 	rte_eth_dev_info_get(res->port_id, &dev_info);
-	if (dev_info.reta_size == 0 || res->size != dev_info.reta_size ||
-				res->size > ETH_RSS_RETA_SIZE_512) {
-		printf("Invalid redirection table size: %u\n", res->size);
+	max_reta_size = RTE_MIN(dev_info.reta_size, ETH_RSS_RETA_SIZE_512);
+	if (res->size == 0 || res->size > max_reta_size) {
+		printf("Invalid redirection table size: %u (1-%u)\n",
+			res->size, max_reta_size);
 		return;
 	}
 
@@ -2170,7 +2353,7 @@ cmdline_parse_token_string_t cmd_showport_reta_show =
 cmdline_parse_token_string_t cmd_showport_reta_port =
 	TOKEN_STRING_INITIALIZER(struct  cmd_showport_reta, port, "port");
 cmdline_parse_token_num_t cmd_showport_reta_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_showport_reta, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_showport_reta, port_id, UINT16);
 cmdline_parse_token_string_t cmd_showport_reta_rss =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_reta, rss, "rss");
 cmdline_parse_token_string_t cmd_showport_reta_reta =
@@ -2201,7 +2384,7 @@ cmdline_parse_inst_t cmd_showport_reta = {
 struct cmd_showport_rss_hash {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t rss_hash;
 	cmdline_fixed_string_t rss_type;
 	cmdline_fixed_string_t key; /* optional argument */
@@ -2222,7 +2405,7 @@ cmdline_parse_token_string_t cmd_showport_rss_hash_show =
 cmdline_parse_token_string_t cmd_showport_rss_hash_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_rss_hash, port, "port");
 cmdline_parse_token_num_t cmd_showport_rss_hash_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_showport_rss_hash, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_showport_rss_hash, port_id, UINT16);
 cmdline_parse_token_string_t cmd_showport_rss_hash_rss_hash =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_rss_hash, rss_hash,
 				 "rss-hash");
@@ -2274,7 +2457,7 @@ cmdline_parse_inst_t cmd_showport_rss_hash_key = {
 struct cmd_config_dcb {
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t config;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t dcb;
 	cmdline_fixed_string_t vt;
 	cmdline_fixed_string_t vt_en;
@@ -2340,7 +2523,7 @@ cmdline_parse_token_string_t cmd_config_dcb_port =
 cmdline_parse_token_string_t cmd_config_dcb_config =
         TOKEN_STRING_INITIALIZER(struct cmd_config_dcb, config, "config");
 cmdline_parse_token_num_t cmd_config_dcb_port_id =
-        TOKEN_NUM_INITIALIZER(struct cmd_config_dcb, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_config_dcb, port_id, UINT16);
 cmdline_parse_token_string_t cmd_config_dcb_dcb =
         TOKEN_STRING_INITIALIZER(struct cmd_config_dcb, dcb, "dcb");
 cmdline_parse_token_string_t cmd_config_dcb_vt =
@@ -2977,7 +3160,7 @@ struct cmd_rx_vlan_filter_all_result {
 	cmdline_fixed_string_t rx_vlan;
 	cmdline_fixed_string_t what;
 	cmdline_fixed_string_t all;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3004,7 +3187,7 @@ cmdline_parse_token_string_t cmd_rx_vlan_filter_all_all =
 				 all, "all");
 cmdline_parse_token_num_t cmd_rx_vlan_filter_all_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_rx_vlan_filter_all_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 
 cmdline_parse_inst_t cmd_rx_vlan_filter_all = {
 	.f = cmd_rx_vlan_filter_all_parsed,
@@ -3130,7 +3313,7 @@ struct cmd_vlan_tpid_result {
 	cmdline_fixed_string_t vlan_type;
 	cmdline_fixed_string_t what;
 	uint16_t tp_id;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3192,7 +3375,7 @@ struct cmd_rx_vlan_filter_result {
 	cmdline_fixed_string_t rx_vlan;
 	cmdline_fixed_string_t what;
 	uint16_t vlan_id;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3219,7 +3402,7 @@ cmdline_parse_token_num_t cmd_rx_vlan_filter_vlanid =
 			      vlan_id, UINT16);
 cmdline_parse_token_num_t cmd_rx_vlan_filter_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_rx_vlan_filter_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 
 cmdline_parse_inst_t cmd_rx_vlan_filter = {
 	.f = cmd_rx_vlan_filter_parsed,
@@ -3240,7 +3423,7 @@ cmdline_parse_inst_t cmd_rx_vlan_filter = {
 struct cmd_tx_vlan_set_result {
 	cmdline_fixed_string_t tx_vlan;
 	cmdline_fixed_string_t set;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vlan_id;
 };
 
@@ -3262,7 +3445,7 @@ cmdline_parse_token_string_t cmd_tx_vlan_set_set =
 				 set, "set");
 cmdline_parse_token_num_t cmd_tx_vlan_set_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_num_t cmd_tx_vlan_set_vlanid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_result,
 			      vlan_id, UINT16);
@@ -3286,7 +3469,7 @@ cmdline_parse_inst_t cmd_tx_vlan_set = {
 struct cmd_tx_vlan_set_qinq_result {
 	cmdline_fixed_string_t tx_vlan;
 	cmdline_fixed_string_t set;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vlan_id;
 	uint16_t vlan_id_outer;
 };
@@ -3309,7 +3492,7 @@ cmdline_parse_token_string_t cmd_tx_vlan_set_qinq_set =
 		set, "set");
 cmdline_parse_token_num_t cmd_tx_vlan_set_qinq_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_qinq_result,
-		port_id, UINT8);
+		port_id, UINT16);
 cmdline_parse_token_num_t cmd_tx_vlan_set_qinq_vlanid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_qinq_result,
 		vlan_id, UINT16);
@@ -3338,7 +3521,7 @@ struct cmd_tx_vlan_set_pvid_result {
 	cmdline_fixed_string_t tx_vlan;
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t pvid;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vlan_id;
 	cmdline_fixed_string_t mode;
 };
@@ -3367,7 +3550,7 @@ cmdline_parse_token_string_t cmd_tx_vlan_set_pvid_pvid =
 				 pvid, "pvid");
 cmdline_parse_token_num_t cmd_tx_vlan_set_pvid_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_pvid_result,
-			     port_id, UINT8);
+			     port_id, UINT16);
 cmdline_parse_token_num_t cmd_tx_vlan_set_pvid_vlan_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_set_pvid_result,
 			      vlan_id, UINT16);
@@ -3394,7 +3577,7 @@ cmdline_parse_inst_t cmd_tx_vlan_set_pvid = {
 struct cmd_tx_vlan_reset_result {
 	cmdline_fixed_string_t tx_vlan;
 	cmdline_fixed_string_t reset;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3415,7 +3598,7 @@ cmdline_parse_token_string_t cmd_tx_vlan_reset_reset =
 				 reset, "reset");
 cmdline_parse_token_num_t cmd_tx_vlan_reset_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tx_vlan_reset_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 
 cmdline_parse_inst_t cmd_tx_vlan_reset = {
 	.f = cmd_tx_vlan_reset_parsed,
@@ -3437,7 +3620,7 @@ struct cmd_csum_result {
 	cmdline_fixed_string_t mode;
 	cmdline_fixed_string_t proto;
 	cmdline_fixed_string_t hwsw;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3542,7 +3725,7 @@ cmdline_parse_token_string_t cmd_csum_hwsw =
 				hwsw, "hw#sw");
 cmdline_parse_token_num_t cmd_csum_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_csum_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_csum_set = {
 	.f = cmd_csum_parsed,
@@ -3581,7 +3764,7 @@ struct cmd_csum_tunnel_result {
 	cmdline_fixed_string_t csum;
 	cmdline_fixed_string_t parse;
 	cmdline_fixed_string_t onoff;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3615,7 +3798,7 @@ cmdline_parse_token_string_t cmd_csum_tunnel_onoff =
 				onoff, "on#off");
 cmdline_parse_token_num_t cmd_csum_tunnel_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_csum_tunnel_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_csum_tunnel = {
 	.f = cmd_csum_tunnel_parsed,
@@ -3636,7 +3819,7 @@ struct cmd_tso_set_result {
 	cmdline_fixed_string_t tso;
 	cmdline_fixed_string_t mode;
 	uint16_t tso_segsz;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3679,7 +3862,7 @@ cmdline_parse_token_num_t cmd_tso_set_tso_segsz =
 				tso_segsz, UINT16);
 cmdline_parse_token_num_t cmd_tso_set_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tso_set_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_tso_set = {
 	.f = cmd_tso_set_parsed,
@@ -3719,11 +3902,11 @@ struct cmd_tunnel_tso_set_result {
 	cmdline_fixed_string_t tso;
 	cmdline_fixed_string_t mode;
 	uint16_t tso_segsz;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
-check_tunnel_tso_nic_support(uint8_t port_id)
+check_tunnel_tso_nic_support(portid_t port_id)
 {
 	struct rte_eth_dev_info dev_info;
 
@@ -3796,7 +3979,7 @@ cmdline_parse_token_num_t cmd_tunnel_tso_set_tso_segsz =
 				tso_segsz, UINT16);
 cmdline_parse_token_num_t cmd_tunnel_tso_set_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_tunnel_tso_set_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_tunnel_tso_set = {
 	.f = cmd_tunnel_tso_set_parsed,
@@ -3827,6 +4010,316 @@ cmdline_parse_inst_t cmd_tunnel_tso_show = {
 		(void *)&cmd_tunnel_tso_set_tso,
 		(void *)&cmd_tunnel_tso_show_mode,
 		(void *)&cmd_tunnel_tso_set_portid,
+		NULL,
+	},
+};
+
+/* *** SET GRO FOR A PORT *** */
+struct cmd_gro_enable_result {
+	cmdline_fixed_string_t cmd_set;
+	cmdline_fixed_string_t cmd_port;
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t cmd_onoff;
+	portid_t cmd_pid;
+};
+
+static void
+cmd_gro_enable_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_gro_enable_result *res;
+
+	res = parsed_result;
+	if (!strcmp(res->cmd_keyword, "gro"))
+		setup_gro(res->cmd_onoff, res->cmd_pid);
+}
+
+cmdline_parse_token_string_t cmd_gro_enable_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_enable_result,
+			cmd_set, "set");
+cmdline_parse_token_string_t cmd_gro_enable_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_enable_result,
+			cmd_keyword, "port");
+cmdline_parse_token_num_t cmd_gro_enable_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_enable_result,
+			cmd_pid, UINT16);
+cmdline_parse_token_string_t cmd_gro_enable_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_enable_result,
+			cmd_keyword, "gro");
+cmdline_parse_token_string_t cmd_gro_enable_onoff =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_enable_result,
+			cmd_onoff, "on#off");
+
+cmdline_parse_inst_t cmd_gro_enable = {
+	.f = cmd_gro_enable_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> gro on|off",
+	.tokens = {
+		(void *)&cmd_gro_enable_set,
+		(void *)&cmd_gro_enable_port,
+		(void *)&cmd_gro_enable_pid,
+		(void *)&cmd_gro_enable_keyword,
+		(void *)&cmd_gro_enable_onoff,
+		NULL,
+	},
+};
+
+/* *** DISPLAY GRO CONFIGURATION *** */
+struct cmd_gro_show_result {
+	cmdline_fixed_string_t cmd_show;
+	cmdline_fixed_string_t cmd_port;
+	cmdline_fixed_string_t cmd_keyword;
+	portid_t cmd_pid;
+};
+
+static void
+cmd_gro_show_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_gro_show_result *res;
+
+	res = parsed_result;
+	if (!strcmp(res->cmd_keyword, "gro"))
+		show_gro(res->cmd_pid);
+}
+
+cmdline_parse_token_string_t cmd_gro_show_show =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_show_result,
+			cmd_show, "show");
+cmdline_parse_token_string_t cmd_gro_show_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_show_result,
+			cmd_port, "port");
+cmdline_parse_token_num_t cmd_gro_show_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_show_result,
+			cmd_pid, UINT16);
+cmdline_parse_token_string_t cmd_gro_show_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_show_result,
+			cmd_keyword, "gro");
+
+cmdline_parse_inst_t cmd_gro_show = {
+	.f = cmd_gro_show_parsed,
+	.data = NULL,
+	.help_str = "show port <port_id> gro",
+	.tokens = {
+		(void *)&cmd_gro_show_show,
+		(void *)&cmd_gro_show_port,
+		(void *)&cmd_gro_show_pid,
+		(void *)&cmd_gro_show_keyword,
+		NULL,
+	},
+};
+
+/* *** SET FLUSH CYCLES FOR GRO *** */
+struct cmd_gro_flush_result {
+	cmdline_fixed_string_t cmd_set;
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t cmd_flush;
+	uint8_t cmd_cycles;
+};
+
+static void
+cmd_gro_flush_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_gro_flush_result *res;
+
+	res = parsed_result;
+	if ((!strcmp(res->cmd_keyword, "gro")) &&
+			(!strcmp(res->cmd_flush, "flush")))
+		setup_gro_flush_cycles(res->cmd_cycles);
+}
+
+cmdline_parse_token_string_t cmd_gro_flush_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_flush_result,
+			cmd_set, "set");
+cmdline_parse_token_string_t cmd_gro_flush_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_flush_result,
+			cmd_keyword, "gro");
+cmdline_parse_token_string_t cmd_gro_flush_flush =
+	TOKEN_STRING_INITIALIZER(struct cmd_gro_flush_result,
+			cmd_flush, "flush");
+cmdline_parse_token_num_t cmd_gro_flush_cycles =
+	TOKEN_NUM_INITIALIZER(struct cmd_gro_flush_result,
+			cmd_cycles, UINT8);
+
+cmdline_parse_inst_t cmd_gro_flush = {
+	.f = cmd_gro_flush_parsed,
+	.data = NULL,
+	.help_str = "set gro flush <cycles>",
+	.tokens = {
+		(void *)&cmd_gro_flush_set,
+		(void *)&cmd_gro_flush_keyword,
+		(void *)&cmd_gro_flush_flush,
+		(void *)&cmd_gro_flush_cycles,
+		NULL,
+	},
+};
+
+/* *** ENABLE/DISABLE GSO *** */
+struct cmd_gso_enable_result {
+	cmdline_fixed_string_t cmd_set;
+	cmdline_fixed_string_t cmd_port;
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t cmd_mode;
+	portid_t cmd_pid;
+};
+
+static void
+cmd_gso_enable_parsed(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_gso_enable_result *res;
+
+	res = parsed_result;
+	if (!strcmp(res->cmd_keyword, "gso"))
+		setup_gso(res->cmd_mode, res->cmd_pid);
+}
+
+cmdline_parse_token_string_t cmd_gso_enable_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_enable_result,
+			cmd_set, "set");
+cmdline_parse_token_string_t cmd_gso_enable_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_enable_result,
+			cmd_port, "port");
+cmdline_parse_token_string_t cmd_gso_enable_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_enable_result,
+			cmd_keyword, "gso");
+cmdline_parse_token_string_t cmd_gso_enable_mode =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_enable_result,
+			cmd_mode, "on#off");
+cmdline_parse_token_num_t cmd_gso_enable_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_gso_enable_result,
+			cmd_pid, UINT16);
+
+cmdline_parse_inst_t cmd_gso_enable = {
+	.f = cmd_gso_enable_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> gso on|off",
+	.tokens = {
+		(void *)&cmd_gso_enable_set,
+		(void *)&cmd_gso_enable_port,
+		(void *)&cmd_gso_enable_pid,
+		(void *)&cmd_gso_enable_keyword,
+		(void *)&cmd_gso_enable_mode,
+		NULL,
+	},
+};
+
+/* *** SET MAX PACKET LENGTH FOR GSO SEGMENTS *** */
+struct cmd_gso_size_result {
+	cmdline_fixed_string_t cmd_set;
+	cmdline_fixed_string_t cmd_keyword;
+	cmdline_fixed_string_t cmd_segsz;
+	uint16_t cmd_size;
+};
+
+static void
+cmd_gso_size_parsed(void *parsed_result,
+		       __attribute__((unused)) struct cmdline *cl,
+		       __attribute__((unused)) void *data)
+{
+	struct cmd_gso_size_result *res = parsed_result;
+
+	if (test_done == 0) {
+		printf("Before setting GSO segsz, please first"
+				" stop fowarding\n");
+		return;
+	}
+
+	if (!strcmp(res->cmd_keyword, "gso") &&
+			!strcmp(res->cmd_segsz, "segsz")) {
+		if (res->cmd_size < RTE_GSO_SEG_SIZE_MIN)
+			printf("gso_size should be larger than %zu."
+					" Please input a legal value\n",
+					RTE_GSO_SEG_SIZE_MIN);
+		else
+			gso_max_segment_size = res->cmd_size;
+	}
+}
+
+cmdline_parse_token_string_t cmd_gso_size_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_size_result,
+				cmd_set, "set");
+cmdline_parse_token_string_t cmd_gso_size_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_size_result,
+				cmd_keyword, "gso");
+cmdline_parse_token_string_t cmd_gso_size_segsz =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_size_result,
+				cmd_segsz, "segsz");
+cmdline_parse_token_num_t cmd_gso_size_size =
+	TOKEN_NUM_INITIALIZER(struct cmd_gso_size_result,
+				cmd_size, UINT16);
+
+cmdline_parse_inst_t cmd_gso_size = {
+	.f = cmd_gso_size_parsed,
+	.data = NULL,
+	.help_str = "set gso segsz <length>",
+	.tokens = {
+		(void *)&cmd_gso_size_set,
+		(void *)&cmd_gso_size_keyword,
+		(void *)&cmd_gso_size_segsz,
+		(void *)&cmd_gso_size_size,
+		NULL,
+	},
+};
+
+/* *** SHOW GSO CONFIGURATION *** */
+struct cmd_gso_show_result {
+	cmdline_fixed_string_t cmd_show;
+	cmdline_fixed_string_t cmd_port;
+	cmdline_fixed_string_t cmd_keyword;
+	portid_t cmd_pid;
+};
+
+static void
+cmd_gso_show_parsed(void *parsed_result,
+		       __attribute__((unused)) struct cmdline *cl,
+		       __attribute__((unused)) void *data)
+{
+	struct cmd_gso_show_result *res = parsed_result;
+
+	if (!rte_eth_dev_is_valid_port(res->cmd_pid)) {
+		printf("invalid port id %u\n", res->cmd_pid);
+		return;
+	}
+	if (!strcmp(res->cmd_keyword, "gso")) {
+		if (gso_ports[res->cmd_pid].enable) {
+			printf("Max GSO'd packet size: %uB\n"
+					"Supported GSO types: TCP/IPv4, "
+					"VxLAN with inner TCP/IPv4 packet, "
+					"GRE with inner TCP/IPv4  packet\n",
+					gso_max_segment_size);
+		} else
+			printf("GSO is not enabled on Port %u\n", res->cmd_pid);
+	}
+}
+
+cmdline_parse_token_string_t cmd_gso_show_show =
+TOKEN_STRING_INITIALIZER(struct cmd_gso_show_result,
+		cmd_show, "show");
+cmdline_parse_token_string_t cmd_gso_show_port =
+TOKEN_STRING_INITIALIZER(struct cmd_gso_show_result,
+		cmd_port, "port");
+cmdline_parse_token_string_t cmd_gso_show_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_gso_show_result,
+				cmd_keyword, "gso");
+cmdline_parse_token_num_t cmd_gso_show_pid =
+	TOKEN_NUM_INITIALIZER(struct cmd_gso_show_result,
+				cmd_pid, UINT16);
+
+cmdline_parse_inst_t cmd_gso_show = {
+	.f = cmd_gso_show_parsed,
+	.data = NULL,
+	.help_str = "show port <port_id> gso",
+	.tokens = {
+		(void *)&cmd_gso_show_show,
+		(void *)&cmd_gso_show_port,
+		(void *)&cmd_gso_show_pid,
+		(void *)&cmd_gso_show_keyword,
 		NULL,
 	},
 };
@@ -3916,7 +4409,7 @@ struct cmd_set_bypass_mode_result {
 	cmdline_fixed_string_t bypass;
 	cmdline_fixed_string_t mode;
 	cmdline_fixed_string_t value;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3928,7 +4421,7 @@ cmd_set_bypass_mode_parsed(void *parsed_result,
 	portid_t port_id = res->port_id;
 	int32_t rc = -EINVAL;
 
-#ifdef RTE_LIBRTE_IXGBE_BYPASS
+#if defined RTE_LIBRTE_IXGBE_PMD && defined RTE_LIBRTE_IXGBE_BYPASS
 	uint32_t bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NORMAL;
 
 	if (!strcmp(res->value, "bypass"))
@@ -3959,7 +4452,7 @@ cmdline_parse_token_string_t cmd_setbypass_mode_value =
 			value, "normal#bypass#isolate");
 cmdline_parse_token_num_t cmd_setbypass_mode_port =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_bypass_mode_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_set_bypass_mode = {
 	.f = cmd_set_bypass_mode_parsed,
@@ -3984,7 +4477,7 @@ struct cmd_set_bypass_event_result {
 	cmdline_fixed_string_t event_value;
 	cmdline_fixed_string_t mode;
 	cmdline_fixed_string_t mode_value;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -3996,7 +4489,7 @@ cmd_set_bypass_event_parsed(void *parsed_result,
 	struct cmd_set_bypass_event_result *res = parsed_result;
 	portid_t port_id = res->port_id;
 
-#ifdef RTE_LIBRTE_IXGBE_BYPASS
+#if defined RTE_LIBRTE_IXGBE_PMD && defined RTE_LIBRTE_IXGBE_BYPASS
 	uint32_t bypass_event = RTE_PMD_IXGBE_BYPASS_EVENT_NONE;
 	uint32_t bypass_mode = RTE_PMD_IXGBE_BYPASS_MODE_NORMAL;
 
@@ -4065,7 +4558,7 @@ cmdline_parse_token_string_t cmd_setbypass_event_mode_value =
 			mode_value, "normal#bypass#isolate");
 cmdline_parse_token_num_t cmd_setbypass_event_port =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_bypass_event_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_set_bypass_event = {
 	.f = cmd_set_bypass_event_parsed,
@@ -4101,7 +4594,7 @@ cmd_set_bypass_timeout_parsed(void *parsed_result,
 {
 	__rte_unused struct cmd_set_bypass_timeout_result *res = parsed_result;
 
-#ifdef RTE_LIBRTE_IXGBE_BYPASS
+#if defined RTE_LIBRTE_IXGBE_PMD && defined RTE_LIBRTE_IXGBE_BYPASS
 	if (!strcmp(res->value, "1.5"))
 		bypass_timeout = RTE_PMD_IXGBE_BYPASS_TMT_1_5_SEC;
 	else if (!strcmp(res->value, "2"))
@@ -4153,7 +4646,7 @@ struct cmd_show_bypass_config_result {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t bypass;
 	cmdline_fixed_string_t config;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -4164,7 +4657,7 @@ cmd_show_bypass_config_parsed(void *parsed_result,
 	struct cmd_show_bypass_config_result *res = parsed_result;
 	portid_t port_id = res->port_id;
 	int rc = -EINVAL;
-#ifdef RTE_LIBRTE_IXGBE_BYPASS
+#if defined RTE_LIBRTE_IXGBE_PMD && defined RTE_LIBRTE_IXGBE_BYPASS
 	uint32_t event_mode;
 	uint32_t bypass_mode;
 	uint32_t timeout = bypass_timeout;
@@ -4232,7 +4725,7 @@ cmdline_parse_token_string_t cmd_showbypass_config_config =
 			config, "config");
 cmdline_parse_token_num_t cmd_showbypass_config_port =
 	TOKEN_NUM_INITIALIZER(struct cmd_show_bypass_config_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_show_bypass_config = {
 	.f = cmd_show_bypass_config_parsed,
@@ -4255,7 +4748,7 @@ struct cmd_set_bonding_mode_result {
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t mode;
 	uint8_t value;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void cmd_set_bonding_mode_parsed(void *parsed_result,
@@ -4284,7 +4777,7 @@ TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_mode_result,
 		value, UINT8);
 cmdline_parse_token_num_t cmd_setbonding_mode_port =
 TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_mode_result,
-		port_id, UINT8);
+		port_id, UINT16);
 
 cmdline_parse_inst_t cmd_set_bonding_mode = {
 		.f = cmd_set_bonding_mode_parsed,
@@ -4301,12 +4794,91 @@ cmdline_parse_inst_t cmd_set_bonding_mode = {
 		}
 };
 
+/* *** SET BONDING SLOW_QUEUE SW/HW *** */
+struct cmd_set_bonding_lacp_dedicated_queues_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t bonding;
+	cmdline_fixed_string_t lacp;
+	cmdline_fixed_string_t dedicated_queues;
+	portid_t port_id;
+	cmdline_fixed_string_t mode;
+};
+
+static void cmd_set_bonding_lacp_dedicated_queues_parsed(void *parsed_result,
+		__attribute__((unused))  struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_set_bonding_lacp_dedicated_queues_result *res = parsed_result;
+	portid_t port_id = res->port_id;
+	struct rte_port *port;
+
+	port = &ports[port_id];
+
+	/** Check if the port is not started **/
+	if (port->port_status != RTE_PORT_STOPPED) {
+		printf("Please stop port %d first\n", port_id);
+		return;
+	}
+
+	if (!strcmp(res->mode, "enable")) {
+		if (rte_eth_bond_8023ad_dedicated_queues_enable(port_id) == 0)
+			printf("Dedicate queues for LACP control packets"
+					" enabled\n");
+		else
+			printf("Enabling dedicate queues for LACP control "
+					"packets on port %d failed\n", port_id);
+	} else if (!strcmp(res->mode, "disable")) {
+		if (rte_eth_bond_8023ad_dedicated_queues_disable(port_id) == 0)
+			printf("Dedicated queues for LACP control packets "
+					"disabled\n");
+		else
+			printf("Disabling dedicated queues for LACP control "
+					"traffic on port %d failed\n", port_id);
+	}
+}
+
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_set =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		set, "set");
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_bonding =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		bonding, "bonding");
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_lacp =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		lacp, "lacp");
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_dedicated_queues =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		dedicated_queues, "dedicated_queues");
+cmdline_parse_token_num_t cmd_setbonding_lacp_dedicated_queues_port_id =
+TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		port_id, UINT16);
+cmdline_parse_token_string_t cmd_setbonding_lacp_dedicated_queues_mode =
+TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_lacp_dedicated_queues_result,
+		mode, "enable#disable");
+
+cmdline_parse_inst_t cmd_set_lacp_dedicated_queues = {
+		.f = cmd_set_bonding_lacp_dedicated_queues_parsed,
+		.help_str = "set bonding lacp dedicated_queues <port_id> "
+			"enable|disable: "
+			"Enable/disable dedicated queues for LACP control traffic for port_id",
+		.data = NULL,
+		.tokens = {
+			(void *)&cmd_setbonding_lacp_dedicated_queues_set,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_bonding,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_lacp,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_dedicated_queues,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_port_id,
+			(void *)&cmd_setbonding_lacp_dedicated_queues_mode,
+			NULL
+		}
+};
+
 /* *** SET BALANCE XMIT POLICY *** */
 struct cmd_set_bonding_balance_xmit_policy_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t balance_xmit_policy;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t policy;
 };
 
@@ -4347,7 +4919,7 @@ TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_balance_xmit_policy_result,
 		balance_xmit_policy, "balance_xmit_policy");
 cmdline_parse_token_num_t cmd_setbonding_balance_xmit_policy_port =
 TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_balance_xmit_policy_result,
-		port_id, UINT8);
+		port_id, UINT16);
 cmdline_parse_token_string_t cmd_setbonding_balance_xmit_policy_policy =
 TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_balance_xmit_policy_result,
 		policy, "l2#l23#l34");
@@ -4373,7 +4945,7 @@ struct cmd_show_bonding_config_result {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t config;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void cmd_show_bonding_config_parsed(void *parsed_result,
@@ -4381,8 +4953,8 @@ static void cmd_show_bonding_config_parsed(void *parsed_result,
 		__attribute__((unused)) void *data)
 {
 	struct cmd_show_bonding_config_result *res = parsed_result;
-	int bonding_mode;
-	uint8_t slaves[RTE_MAX_ETHPORTS];
+	int bonding_mode, agg_mode;
+	portid_t slaves[RTE_MAX_ETHPORTS];
 	int num_slaves, num_active_slaves;
 	int primary_id;
 	int i;
@@ -4420,6 +4992,23 @@ static void cmd_show_bonding_config_parsed(void *parsed_result,
 			}
 			printf("\n");
 		}
+	}
+
+	if (bonding_mode == BONDING_MODE_8023AD) {
+		agg_mode = rte_eth_bond_8023ad_agg_selection_get(port_id);
+		printf("\tIEEE802.3AD Aggregator Mode: ");
+		switch (agg_mode) {
+		case AGG_BANDWIDTH:
+			printf("bandwidth");
+			break;
+		case AGG_STABLE:
+			printf("stable");
+			break;
+		case AGG_COUNT:
+			printf("count");
+			break;
+		}
+		printf("\n");
 	}
 
 	num_slaves = rte_eth_bond_slaves_get(port_id, slaves, RTE_MAX_ETHPORTS);
@@ -4478,7 +5067,7 @@ TOKEN_STRING_INITIALIZER(struct cmd_show_bonding_config_result,
 		config, "config");
 cmdline_parse_token_num_t cmd_showbonding_config_port =
 TOKEN_NUM_INITIALIZER(struct cmd_show_bonding_config_result,
-		port_id, UINT8);
+		port_id, UINT16);
 
 cmdline_parse_inst_t cmd_show_bonding_config = {
 		.f = cmd_show_bonding_config_parsed,
@@ -4499,8 +5088,8 @@ struct cmd_set_bonding_primary_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t primary;
-	uint8_t slave_id;
-	uint8_t port_id;
+	portid_t slave_id;
+	portid_t port_id;
 };
 
 static void cmd_set_bonding_primary_parsed(void *parsed_result,
@@ -4531,10 +5120,10 @@ TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_primary_result,
 		primary, "primary");
 cmdline_parse_token_num_t cmd_setbonding_primary_slave =
 TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_primary_result,
-		slave_id, UINT8);
+		slave_id, UINT16);
 cmdline_parse_token_num_t cmd_setbonding_primary_port =
 TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_primary_result,
-		port_id, UINT8);
+		port_id, UINT16);
 
 cmdline_parse_inst_t cmd_set_bonding_primary = {
 		.f = cmd_set_bonding_primary_parsed,
@@ -4556,8 +5145,8 @@ struct cmd_add_bonding_slave_result {
 	cmdline_fixed_string_t add;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t slave;
-	uint8_t slave_id;
-	uint8_t port_id;
+	portid_t slave_id;
+	portid_t port_id;
 };
 
 static void cmd_add_bonding_slave_parsed(void *parsed_result,
@@ -4568,7 +5157,7 @@ static void cmd_add_bonding_slave_parsed(void *parsed_result,
 	portid_t master_port_id = res->port_id;
 	portid_t slave_port_id = res->slave_id;
 
-	/* Set the primary slave for a bonded device. */
+	/* add the slave for a bonded device. */
 	if (0 != rte_eth_bond_slave_add(master_port_id, slave_port_id)) {
 		printf("\t Failed to add slave %d to master port = %d.\n",
 				slave_port_id, master_port_id);
@@ -4589,10 +5178,10 @@ TOKEN_STRING_INITIALIZER(struct cmd_add_bonding_slave_result,
 		slave, "slave");
 cmdline_parse_token_num_t cmd_addbonding_slave_slaveid =
 TOKEN_NUM_INITIALIZER(struct cmd_add_bonding_slave_result,
-		slave_id, UINT8);
+		slave_id, UINT16);
 cmdline_parse_token_num_t cmd_addbonding_slave_port =
 TOKEN_NUM_INITIALIZER(struct cmd_add_bonding_slave_result,
-		port_id, UINT8);
+		port_id, UINT16);
 
 cmdline_parse_inst_t cmd_add_bonding_slave = {
 		.f = cmd_add_bonding_slave_parsed,
@@ -4614,8 +5203,8 @@ struct cmd_remove_bonding_slave_result {
 	cmdline_fixed_string_t remove;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t slave;
-	uint8_t slave_id;
-	uint8_t port_id;
+	portid_t slave_id;
+	portid_t port_id;
 };
 
 static void cmd_remove_bonding_slave_parsed(void *parsed_result,
@@ -4626,7 +5215,7 @@ static void cmd_remove_bonding_slave_parsed(void *parsed_result,
 	portid_t master_port_id = res->port_id;
 	portid_t slave_port_id = res->slave_id;
 
-	/* Set the primary slave for a bonded device. */
+	/* remove the slave from a bonded device. */
 	if (0 != rte_eth_bond_slave_remove(master_port_id, slave_port_id)) {
 		printf("\t Failed to remove slave %d from master port = %d.\n",
 				slave_port_id, master_port_id);
@@ -4647,10 +5236,10 @@ cmdline_parse_token_string_t cmd_removebonding_slave_slave =
 				slave, "slave");
 cmdline_parse_token_num_t cmd_removebonding_slave_slaveid =
 		TOKEN_NUM_INITIALIZER(struct cmd_remove_bonding_slave_result,
-				slave_id, UINT8);
+				slave_id, UINT16);
 cmdline_parse_token_num_t cmd_removebonding_slave_port =
 		TOKEN_NUM_INITIALIZER(struct cmd_remove_bonding_slave_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_remove_bonding_slave = {
 		.f = cmd_remove_bonding_slave_parsed,
@@ -4691,7 +5280,7 @@ static void cmd_create_bonded_device_parsed(void *parsed_result,
 		return;
 	}
 
-	snprintf(ethdev_name, RTE_ETH_NAME_MAX_LEN, "net_bond_testpmd_%d",
+	snprintf(ethdev_name, RTE_ETH_NAME_MAX_LEN, "net_bonding_testpmd_%d",
 			bond_dev_num++);
 
 	/* Create a new bonded device. */
@@ -4747,7 +5336,7 @@ struct cmd_set_bond_mac_addr_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t mac_addr;
-	uint8_t port_num;
+	uint16_t port_num;
 	struct ether_addr address;
 };
 
@@ -4777,7 +5366,8 @@ cmdline_parse_token_string_t cmd_set_bond_mac_addr_mac =
 		TOKEN_STRING_INITIALIZER(struct cmd_set_bond_mac_addr_result, mac_addr,
 				"mac_addr");
 cmdline_parse_token_num_t cmd_set_bond_mac_addr_portnum =
-		TOKEN_NUM_INITIALIZER(struct cmd_set_bond_mac_addr_result, port_num, UINT8);
+		TOKEN_NUM_INITIALIZER(struct cmd_set_bond_mac_addr_result,
+				port_num, UINT16);
 cmdline_parse_token_etheraddr_t cmd_set_bond_mac_addr_addr =
 		TOKEN_ETHERADDR_INITIALIZER(struct cmd_set_bond_mac_addr_result, address);
 
@@ -4801,7 +5391,7 @@ struct cmd_set_bond_mon_period_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t bonding;
 	cmdline_fixed_string_t mon_period;
-	uint8_t port_num;
+	uint16_t port_num;
 	uint32_t period_ms;
 };
 
@@ -4835,7 +5425,7 @@ cmdline_parse_token_string_t cmd_set_bond_mon_period_mon_period =
 				mon_period,	"mon_period");
 cmdline_parse_token_num_t cmd_set_bond_mon_period_portnum =
 		TOKEN_NUM_INITIALIZER(struct cmd_set_bond_mon_period_result,
-				port_num, UINT8);
+				port_num, UINT16);
 cmdline_parse_token_num_t cmd_set_bond_mon_period_period_ms =
 		TOKEN_NUM_INITIALIZER(struct cmd_set_bond_mon_period_result,
 				period_ms, UINT32);
@@ -4853,6 +5443,77 @@ cmdline_parse_inst_t cmd_set_bond_mon_period = {
 				NULL
 		}
 };
+
+
+
+struct cmd_set_bonding_agg_mode_policy_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t bonding;
+	cmdline_fixed_string_t agg_mode;
+	uint16_t port_num;
+	cmdline_fixed_string_t policy;
+};
+
+
+static void
+cmd_set_bonding_agg_mode(void *parsed_result,
+		__attribute__((unused)) struct cmdline *cl,
+		__attribute__((unused)) void *data)
+{
+	struct cmd_set_bonding_agg_mode_policy_result *res = parsed_result;
+	uint8_t policy = AGG_BANDWIDTH;
+
+	if (res->port_num >= nb_ports) {
+		printf("Port id %d must be less than %d\n",
+				res->port_num, nb_ports);
+		return;
+	}
+
+	if (!strcmp(res->policy, "bandwidth"))
+		policy = AGG_BANDWIDTH;
+	else if (!strcmp(res->policy, "stable"))
+		policy = AGG_STABLE;
+	else if (!strcmp(res->policy, "count"))
+		policy = AGG_COUNT;
+
+	rte_eth_bond_8023ad_agg_selection_set(res->port_num, policy);
+}
+
+
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				set, "set");
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_bonding =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				bonding, "bonding");
+
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_agg_mode =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				agg_mode, "agg_mode");
+
+cmdline_parse_token_num_t cmd_set_bonding_agg_mode_portnum =
+	TOKEN_NUM_INITIALIZER(struct cmd_set_bonding_agg_mode_policy_result,
+				port_num, UINT16);
+
+cmdline_parse_token_string_t cmd_set_bonding_agg_mode_policy_string =
+	TOKEN_STRING_INITIALIZER(
+			struct cmd_set_bonding_balance_xmit_policy_result,
+		policy, "stable#bandwidth#count");
+
+cmdline_parse_inst_t cmd_set_bonding_agg_mode_policy = {
+	.f = cmd_set_bonding_agg_mode,
+	.data = (void *) 0,
+	.help_str = "set bonding mode IEEE802.3AD aggregator policy <port_id> <agg_name>",
+	.tokens = {
+			(void *)&cmd_set_bonding_agg_mode_set,
+			(void *)&cmd_set_bonding_agg_mode_bonding,
+			(void *)&cmd_set_bonding_agg_mode_agg_mode,
+			(void *)&cmd_set_bonding_agg_mode_portnum,
+			(void *)&cmd_set_bonding_agg_mode_policy_string,
+			NULL
+		}
+};
+
 
 #endif /* RTE_LIBRTE_PMD_BOND */
 
@@ -5046,7 +5707,7 @@ struct cmd_set_promisc_mode_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t promisc;
 	cmdline_fixed_string_t port_all; /* valid if "allports" argument == 1 */
-	uint8_t port_num;                /* valid if "allports" argument == 0 */
+	uint16_t port_num;               /* valid if "allports" argument == 0 */
 	cmdline_fixed_string_t mode;
 };
 
@@ -5126,7 +5787,7 @@ struct cmd_set_allmulti_mode_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t allmulti;
 	cmdline_fixed_string_t port_all; /* valid if "allports" argument == 1 */
-	uint8_t port_num;                /* valid if "allports" argument == 0 */
+	uint16_t port_num;               /* valid if "allports" argument == 0 */
 	cmdline_fixed_string_t mode;
 };
 
@@ -5170,7 +5831,7 @@ cmdline_parse_token_string_t cmd_setallmulti_portall =
 				 "all");
 cmdline_parse_token_num_t cmd_setallmulti_portnum =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_allmulti_mode_result, port_num,
-			      UINT8);
+			      UINT16);
 cmdline_parse_token_string_t cmd_setallmulti_mode =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_allmulti_mode_result, mode,
 				 "on#off");
@@ -5222,7 +5883,7 @@ struct cmd_link_flow_ctrl_set_result {
 	uint16_t pause_time;
 	cmdline_fixed_string_t xon_str;
 	uint16_t send_xon;
-	uint8_t  port_id;
+	portid_t port_id;
 };
 
 cmdline_parse_token_string_t cmd_lfc_set_set =
@@ -5281,7 +5942,7 @@ cmdline_parse_token_string_t cmd_lfc_set_autoneg =
 				autoneg, "on#off");
 cmdline_parse_token_num_t cmd_lfc_set_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_link_flow_ctrl_set_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 /* forward declaration */
 static void
@@ -5520,7 +6181,7 @@ struct cmd_priority_flow_ctrl_set_result {
 	uint32_t low_water;
 	uint16_t pause_time;
 	uint8_t  priority;
-	uint8_t  port_id;
+	portid_t port_id;
 };
 
 static void
@@ -5588,7 +6249,7 @@ cmdline_parse_token_num_t cmd_pfc_set_priority =
 				priority, UINT8);
 cmdline_parse_token_num_t cmd_pfc_set_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_priority_flow_ctrl_set_result,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_priority_flow_control_set = {
 	.f = cmd_priority_flow_ctrl_set_parsed,
@@ -5746,7 +6407,7 @@ struct cmd_set_link_up_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t link_up;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 cmdline_parse_token_string_t cmd_set_link_up_set =
@@ -5757,7 +6418,7 @@ cmdline_parse_token_string_t cmd_set_link_up_link_up =
 cmdline_parse_token_string_t cmd_set_link_up_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_link_up_result, port, "port");
 cmdline_parse_token_num_t cmd_set_link_up_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_set_link_up_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_set_link_up_result, port_id, UINT16);
 
 static void cmd_set_link_up_parsed(__attribute__((unused)) void *parsed_result,
 			     __attribute__((unused)) struct cmdline *cl,
@@ -5785,7 +6446,7 @@ struct cmd_set_link_down_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t link_down;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 cmdline_parse_token_string_t cmd_set_link_down_set =
@@ -5796,7 +6457,7 @@ cmdline_parse_token_string_t cmd_set_link_down_link_down =
 cmdline_parse_token_string_t cmd_set_link_down_port =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_link_down_result, port, "port");
 cmdline_parse_token_num_t cmd_set_link_down_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_set_link_down_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_set_link_down_result, port_id, UINT16);
 
 static void cmd_set_link_down_parsed(
 				__attribute__((unused)) void *parsed_result,
@@ -5936,7 +6597,7 @@ struct cmd_showport_result {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t port;
 	cmdline_fixed_string_t what;
-	uint8_t portnum;
+	uint16_t portnum;
 };
 
 static void cmd_showport_parsed(void *parsed_result,
@@ -5974,7 +6635,7 @@ cmdline_parse_token_string_t cmd_showport_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_showport_result, what,
 				 "info#stats#xstats#fdir#stat_qmap#dcb_tc#cap");
 cmdline_parse_token_num_t cmd_showport_portnum =
-	TOKEN_NUM_INITIALIZER(struct cmd_showport_result, portnum, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_showport_result, portnum, UINT16);
 
 cmdline_parse_inst_t cmd_showport = {
 	.f = cmd_showport_parsed,
@@ -5996,7 +6657,7 @@ struct cmd_showqueue_result {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t type;
 	cmdline_fixed_string_t what;
-	uint8_t portnum;
+	uint16_t portnum;
 	uint16_t queuenum;
 };
 
@@ -6020,7 +6681,7 @@ cmdline_parse_token_string_t cmd_showqueue_type =
 cmdline_parse_token_string_t cmd_showqueue_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_showqueue_result, what, "info");
 cmdline_parse_token_num_t cmd_showqueue_portnum =
-	TOKEN_NUM_INITIALIZER(struct cmd_showqueue_result, portnum, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_showqueue_result, portnum, UINT16);
 cmdline_parse_token_num_t cmd_showqueue_queuenum =
 	TOKEN_NUM_INITIALIZER(struct cmd_showqueue_result, queuenum, UINT16);
 
@@ -6042,7 +6703,7 @@ cmdline_parse_inst_t cmd_showqueue = {
 struct cmd_read_reg_result {
 	cmdline_fixed_string_t read;
 	cmdline_fixed_string_t reg;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t reg_off;
 };
 
@@ -6060,7 +6721,7 @@ cmdline_parse_token_string_t cmd_read_reg_read =
 cmdline_parse_token_string_t cmd_read_reg_reg =
 	TOKEN_STRING_INITIALIZER(struct cmd_read_reg_result, reg, "reg");
 cmdline_parse_token_num_t cmd_read_reg_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_result, port_id, UINT16);
 cmdline_parse_token_num_t cmd_read_reg_reg_off =
 	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_result, reg_off, UINT32);
 
@@ -6081,7 +6742,7 @@ cmdline_parse_inst_t cmd_read_reg = {
 struct cmd_read_reg_bit_field_result {
 	cmdline_fixed_string_t read;
 	cmdline_fixed_string_t regfield;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t reg_off;
 	uint8_t bit1_pos;
 	uint8_t bit2_pos;
@@ -6105,7 +6766,7 @@ cmdline_parse_token_string_t cmd_read_reg_bit_field_regfield =
 				 regfield, "regfield");
 cmdline_parse_token_num_t cmd_read_reg_bit_field_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_bit_field_result, port_id,
-			      UINT8);
+			      UINT16);
 cmdline_parse_token_num_t cmd_read_reg_bit_field_reg_off =
 	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_bit_field_result, reg_off,
 			      UINT32);
@@ -6136,7 +6797,7 @@ cmdline_parse_inst_t cmd_read_reg_bit_field = {
 struct cmd_read_reg_bit_result {
 	cmdline_fixed_string_t read;
 	cmdline_fixed_string_t regbit;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t reg_off;
 	uint8_t bit_pos;
 };
@@ -6156,7 +6817,7 @@ cmdline_parse_token_string_t cmd_read_reg_bit_regbit =
 	TOKEN_STRING_INITIALIZER(struct cmd_read_reg_bit_result,
 				 regbit, "regbit");
 cmdline_parse_token_num_t cmd_read_reg_bit_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_bit_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_bit_result, port_id, UINT16);
 cmdline_parse_token_num_t cmd_read_reg_bit_reg_off =
 	TOKEN_NUM_INITIALIZER(struct cmd_read_reg_bit_result, reg_off, UINT32);
 cmdline_parse_token_num_t cmd_read_reg_bit_bit_pos =
@@ -6180,7 +6841,7 @@ cmdline_parse_inst_t cmd_read_reg_bit = {
 struct cmd_write_reg_result {
 	cmdline_fixed_string_t write;
 	cmdline_fixed_string_t reg;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t reg_off;
 	uint32_t value;
 };
@@ -6199,7 +6860,7 @@ cmdline_parse_token_string_t cmd_write_reg_write =
 cmdline_parse_token_string_t cmd_write_reg_reg =
 	TOKEN_STRING_INITIALIZER(struct cmd_write_reg_result, reg, "reg");
 cmdline_parse_token_num_t cmd_write_reg_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_result, port_id, UINT16);
 cmdline_parse_token_num_t cmd_write_reg_reg_off =
 	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_result, reg_off, UINT32);
 cmdline_parse_token_num_t cmd_write_reg_value =
@@ -6223,7 +6884,7 @@ cmdline_parse_inst_t cmd_write_reg = {
 struct cmd_write_reg_bit_field_result {
 	cmdline_fixed_string_t write;
 	cmdline_fixed_string_t regfield;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t reg_off;
 	uint8_t bit1_pos;
 	uint8_t bit2_pos;
@@ -6248,7 +6909,7 @@ cmdline_parse_token_string_t cmd_write_reg_bit_field_regfield =
 				 regfield, "regfield");
 cmdline_parse_token_num_t cmd_write_reg_bit_field_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_bit_field_result, port_id,
-			      UINT8);
+			      UINT16);
 cmdline_parse_token_num_t cmd_write_reg_bit_field_reg_off =
 	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_bit_field_result, reg_off,
 			      UINT32);
@@ -6284,7 +6945,7 @@ cmdline_parse_inst_t cmd_write_reg_bit_field = {
 struct cmd_write_reg_bit_result {
 	cmdline_fixed_string_t write;
 	cmdline_fixed_string_t regbit;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t reg_off;
 	uint8_t bit_pos;
 	uint8_t value;
@@ -6306,7 +6967,7 @@ cmdline_parse_token_string_t cmd_write_reg_bit_regbit =
 	TOKEN_STRING_INITIALIZER(struct cmd_write_reg_bit_result,
 				 regbit, "regbit");
 cmdline_parse_token_num_t cmd_write_reg_bit_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_bit_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_bit_result, port_id, UINT16);
 cmdline_parse_token_num_t cmd_write_reg_bit_reg_off =
 	TOKEN_NUM_INITIALIZER(struct cmd_write_reg_bit_result, reg_off, UINT32);
 cmdline_parse_token_num_t cmd_write_reg_bit_bit_pos =
@@ -6334,7 +6995,7 @@ cmdline_parse_inst_t cmd_write_reg_bit = {
 struct cmd_read_rxd_txd_result {
 	cmdline_fixed_string_t read;
 	cmdline_fixed_string_t rxd_txd;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t queue_id;
 	uint16_t desc_id;
 };
@@ -6358,7 +7019,7 @@ cmdline_parse_token_string_t cmd_read_rxd_txd_rxd_txd =
 	TOKEN_STRING_INITIALIZER(struct cmd_read_rxd_txd_result, rxd_txd,
 				 "rxd#txd");
 cmdline_parse_token_num_t cmd_read_rxd_txd_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_read_rxd_txd_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_read_rxd_txd_result, port_id, UINT16);
 cmdline_parse_token_num_t cmd_read_rxd_txd_queue_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_read_rxd_txd_result, queue_id, UINT16);
 cmdline_parse_token_num_t cmd_read_rxd_txd_desc_id =
@@ -6408,7 +7069,7 @@ cmdline_parse_inst_t cmd_quit = {
 struct cmd_mac_addr_result {
 	cmdline_fixed_string_t mac_addr_cmd;
 	cmdline_fixed_string_t what;
-	uint8_t port_num;
+	uint16_t port_num;
 	struct ether_addr address;
 };
 
@@ -6440,7 +7101,8 @@ cmdline_parse_token_string_t cmd_mac_addr_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_mac_addr_result, what,
 				"add#remove#set");
 cmdline_parse_token_num_t cmd_mac_addr_portnum =
-		TOKEN_NUM_INITIALIZER(struct cmd_mac_addr_result, port_num, UINT8);
+		TOKEN_NUM_INITIALIZER(struct cmd_mac_addr_result, port_num,
+					UINT16);
 cmdline_parse_token_etheraddr_t cmd_mac_addr_addr =
 		TOKEN_ETHERADDR_INITIALIZER(struct cmd_mac_addr_result, address);
 
@@ -6464,7 +7126,7 @@ struct cmd_set_qmap_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t qmap;
 	cmdline_fixed_string_t what;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t queue_id;
 	uint8_t map_value;
 };
@@ -6491,7 +7153,7 @@ cmdline_parse_token_string_t cmd_setqmap_what =
 				 what, "tx#rx");
 cmdline_parse_token_num_t cmd_setqmap_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_qmap_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_num_t cmd_setqmap_queueid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_qmap_result,
 			      queue_id, UINT16);
@@ -6515,11 +7177,53 @@ cmdline_parse_inst_t cmd_set_qmap = {
 	},
 };
 
+/* *** SET OPTION TO HIDE ZERO VALUES FOR XSTATS  DISPLAY *** */
+struct cmd_set_xstats_hide_zero_result {
+	cmdline_fixed_string_t keyword;
+	cmdline_fixed_string_t name;
+	cmdline_fixed_string_t on_off;
+};
+
+static void
+cmd_set_xstats_hide_zero_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_set_xstats_hide_zero_result *res;
+	uint16_t on_off = 0;
+
+	res = parsed_result;
+	on_off = !strcmp(res->on_off, "on") ? 1 : 0;
+	set_xstats_hide_zero(on_off);
+}
+
+cmdline_parse_token_string_t cmd_set_xstats_hide_zero_keyword =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_xstats_hide_zero_result,
+				 keyword, "set");
+cmdline_parse_token_string_t cmd_set_xstats_hide_zero_name =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_xstats_hide_zero_result,
+				 name, "xstats-hide-zero");
+cmdline_parse_token_string_t cmd_set_xstats_hide_zero_on_off =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_xstats_hide_zero_result,
+				 on_off, "on#off");
+
+cmdline_parse_inst_t cmd_set_xstats_hide_zero = {
+	.f = cmd_set_xstats_hide_zero_parsed,
+	.data = NULL,
+	.help_str = "set xstats-hide-zero on|off",
+	.tokens = {
+		(void *)&cmd_set_xstats_hide_zero_keyword,
+		(void *)&cmd_set_xstats_hide_zero_name,
+		(void *)&cmd_set_xstats_hide_zero_on_off,
+		NULL,
+	},
+};
+
 /* *** CONFIGURE UNICAST HASH TABLE *** */
 struct cmd_set_uc_hash_table {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t what;
 	struct ether_addr address;
 	cmdline_fixed_string_t mode;
@@ -6551,7 +7255,7 @@ cmdline_parse_token_string_t cmd_set_uc_hash_port =
 				 port, "port");
 cmdline_parse_token_num_t cmd_set_uc_hash_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_uc_hash_table,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_uc_hash_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_uc_hash_table,
 				 what, "uta");
@@ -6580,7 +7284,7 @@ cmdline_parse_inst_t cmd_set_uc_hash_filter = {
 struct cmd_set_uc_all_hash_table {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t what;
 	cmdline_fixed_string_t value;
 	cmdline_fixed_string_t mode;
@@ -6612,7 +7316,7 @@ cmdline_parse_token_string_t cmd_set_uc_all_hash_port =
 				 port, "port");
 cmdline_parse_token_num_t cmd_set_uc_all_hash_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_uc_all_hash_table,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_uc_all_hash_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_uc_all_hash_table,
 				 what, "uta");
@@ -6642,7 +7346,7 @@ cmdline_parse_inst_t cmd_set_uc_all_hash_filter = {
 struct cmd_set_vf_macvlan_filter {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t vf;
 	uint8_t vf_id;
 	struct ether_addr address;
@@ -6661,7 +7365,7 @@ cmd_set_vf_macvlan_parsed(void *parsed_result,
 
 	memset(&filter, 0, sizeof(struct rte_eth_mac_filter));
 
-	(void)rte_memcpy(&filter.mac_addr, &res->address, ETHER_ADDR_LEN);
+	rte_memcpy(&filter.mac_addr, &res->address, ETHER_ADDR_LEN);
 
 	/* set VF MAC filter */
 	filter.is_vf = 1;
@@ -6704,7 +7408,7 @@ cmdline_parse_token_string_t cmd_set_vf_macvlan_port =
 				 port, "port");
 cmdline_parse_token_num_t cmd_set_vf_macvlan_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_vf_macvlan_filter,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_vf_macvlan_vf =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_vf_macvlan_filter,
 				 vf, "vf");
@@ -6742,12 +7446,11 @@ cmdline_parse_inst_t cmd_set_vf_macvlan_filter = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* *** CONFIGURE VF TRAFFIC CONTROL *** */
 struct cmd_set_vf_traffic {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t vf;
 	uint8_t vf_id;
 	cmdline_fixed_string_t what;
@@ -6774,7 +7477,7 @@ cmdline_parse_token_string_t cmd_setvf_traffic_port =
 				 port, "port");
 cmdline_parse_token_num_t cmd_setvf_traffic_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_vf_traffic,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_setvf_traffic_vf =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_vf_traffic,
 				 vf, "vf");
@@ -6803,13 +7506,12 @@ cmdline_parse_inst_t cmd_set_vf_traffic = {
 		NULL,
 	},
 };
-#endif /* RTE_LIBRTE_IXGBE_PMD */
 
 /* *** CONFIGURE VF RECEIVE MODE *** */
 struct cmd_set_vf_rxmode {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t vf;
 	uint8_t vf_id;
 	cmdline_fixed_string_t what;
@@ -6838,6 +7540,8 @@ cmd_set_vf_rxmode_parsed(void *parsed_result,
 			rx_mode |= ETH_VMDQ_ACCEPT_MULTICAST;
 	}
 
+	RTE_SET_USED(is_on);
+
 #ifdef RTE_LIBRTE_IXGBE_PMD
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_ixgbe_set_vf_rxmode(res->port_id, res->vf_id,
@@ -6861,7 +7565,7 @@ cmdline_parse_token_string_t cmd_set_vf_rxmode_port =
 				 port, "port");
 cmdline_parse_token_num_t cmd_set_vf_rxmode_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_vf_rxmode,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_vf_rxmode_vf =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_vf_rxmode,
 				 vf, "vf");
@@ -6901,7 +7605,7 @@ struct cmd_vf_mac_addr_result {
 	cmdline_fixed_string_t mac_addr_cmd;
 	cmdline_fixed_string_t what;
 	cmdline_fixed_string_t port;
-	uint8_t port_num;
+	uint16_t port_num;
 	cmdline_fixed_string_t vf;
 	uint8_t vf_num;
 	struct ether_addr address;
@@ -6912,11 +7616,22 @@ static void cmd_vf_mac_addr_parsed(void *parsed_result,
 		__attribute__((unused)) void *data)
 {
 	struct cmd_vf_mac_addr_result *res = parsed_result;
-	int ret = 0;
+	int ret = -ENOTSUP;
 
-	if (strcmp(res->what, "add") == 0)
-		ret = rte_eth_dev_mac_addr_add(res->port_num,
-					&res->address, res->vf_num);
+	if (strcmp(res->what, "add") != 0)
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_i40e_add_vf_mac_addr(res->port_num, res->vf_num,
+						   &res->address);
+#endif
+#ifdef RTE_LIBRTE_BNXT_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_bnxt_mac_addr_add(res->port_num, &res->address,
+						res->vf_num);
+#endif
+
 	if(ret < 0)
 		printf("vf_mac_addr_cmd error: (%s)\n", strerror(-ret));
 
@@ -6933,7 +7648,7 @@ cmdline_parse_token_string_t cmd_vf_mac_addr_port =
 				port,"port");
 cmdline_parse_token_num_t cmd_vf_mac_addr_portnum =
 	TOKEN_NUM_INITIALIZER(struct cmd_vf_mac_addr_result,
-				port_num, UINT8);
+				port_num, UINT16);
 cmdline_parse_token_string_t cmd_vf_mac_addr_vf =
 	TOKEN_STRING_INITIALIZER(struct cmd_vf_mac_addr_result,
 				vf,"vf");
@@ -6967,7 +7682,7 @@ struct cmd_vf_rx_vlan_filter {
 	cmdline_fixed_string_t what;
 	uint16_t vlan_id;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t vf;
 	uint64_t vf_mask;
 };
@@ -7030,7 +7745,7 @@ cmdline_parse_token_string_t cmd_vf_rx_vlan_filter_port =
 				 port, "port");
 cmdline_parse_token_num_t cmd_vf_rx_vlan_filter_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_vf_rx_vlan_filter,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_vf_rx_vlan_filter_vf =
 	TOKEN_STRING_INITIALIZER(struct cmd_vf_rx_vlan_filter,
 				 vf, "vf");
@@ -7059,7 +7774,7 @@ cmdline_parse_inst_t cmd_vf_rxvlan_filter = {
 struct cmd_queue_rate_limit_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_num;
+	uint16_t port_num;
 	cmdline_fixed_string_t queue;
 	uint8_t queue_num;
 	cmdline_fixed_string_t rate;
@@ -7091,7 +7806,7 @@ cmdline_parse_token_string_t cmd_queue_rate_limit_port =
 				port, "port");
 cmdline_parse_token_num_t cmd_queue_rate_limit_portnum =
 	TOKEN_NUM_INITIALIZER(struct cmd_queue_rate_limit_result,
-				port_num, UINT8);
+				port_num, UINT16);
 cmdline_parse_token_string_t cmd_queue_rate_limit_queue =
 	TOKEN_STRING_INITIALIZER(struct cmd_queue_rate_limit_result,
 				queue, "queue");
@@ -7126,7 +7841,7 @@ cmdline_parse_inst_t cmd_queue_rate_limit = {
 struct cmd_vf_rate_limit_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_num;
+	uint16_t port_num;
 	cmdline_fixed_string_t vf;
 	uint8_t vf_num;
 	cmdline_fixed_string_t rate;
@@ -7161,7 +7876,7 @@ cmdline_parse_token_string_t cmd_vf_rate_limit_port =
 				port, "port");
 cmdline_parse_token_num_t cmd_vf_rate_limit_portnum =
 	TOKEN_NUM_INITIALIZER(struct cmd_vf_rate_limit_result,
-				port_num, UINT8);
+				port_num, UINT16);
 cmdline_parse_token_string_t cmd_vf_rate_limit_vf =
 	TOKEN_STRING_INITIALIZER(struct cmd_vf_rate_limit_result,
 				vf, "vf");
@@ -7205,7 +7920,7 @@ cmdline_parse_inst_t cmd_vf_rate_limit = {
 struct cmd_tunnel_filter_result {
 	cmdline_fixed_string_t cmd;
 	cmdline_fixed_string_t what;
-	uint8_t port_id;
+	portid_t port_id;
 	struct ether_addr outer_mac;
 	struct ether_addr inner_mac;
 	cmdline_ipaddr_t ip_value;
@@ -7299,7 +8014,7 @@ cmdline_parse_token_string_t cmd_tunnel_filter_what =
 	what, "add#rm");
 cmdline_parse_token_num_t cmd_tunnel_filter_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_tunnel_filter_result,
-	port_id, UINT8);
+	port_id, UINT16);
 cmdline_parse_token_etheraddr_t cmd_tunnel_filter_outer_mac =
 	TOKEN_ETHERADDR_INITIALIZER(struct cmd_tunnel_filter_result,
 	outer_mac);
@@ -7355,7 +8070,7 @@ struct cmd_tunnel_udp_config {
 	cmdline_fixed_string_t cmd;
 	cmdline_fixed_string_t what;
 	uint16_t udp_port;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -7394,7 +8109,7 @@ cmdline_parse_token_num_t cmd_tunnel_udp_config_udp_port =
 				udp_port, UINT16);
 cmdline_parse_token_num_t cmd_tunnel_udp_config_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_tunnel_udp_config,
-				port_id, UINT8);
+				port_id, UINT16);
 
 cmdline_parse_inst_t cmd_tunnel_udp_config = {
 	.f = cmd_tunnel_udp_config_parsed,
@@ -7413,7 +8128,7 @@ cmdline_parse_inst_t cmd_tunnel_udp_config = {
 /* *** GLOBAL CONFIG *** */
 struct cmd_global_config_result {
 	cmdline_fixed_string_t cmd;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t cfg_type;
 	uint8_t len;
 };
@@ -7440,7 +8155,8 @@ cmdline_parse_token_string_t cmd_global_config_cmd =
 	TOKEN_STRING_INITIALIZER(struct cmd_global_config_result, cmd,
 		"global_config");
 cmdline_parse_token_num_t cmd_global_config_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_global_config_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_global_config_result, port_id,
+			       UINT16);
 cmdline_parse_token_string_t cmd_global_config_type =
 	TOKEN_STRING_INITIALIZER(struct cmd_global_config_result,
 		cfg_type, "gre-key-len");
@@ -7465,7 +8181,7 @@ cmdline_parse_inst_t cmd_global_config = {
 struct cmd_set_mirror_mask_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t mirror;
 	uint8_t rule_id;
 	cmdline_fixed_string_t what;
@@ -7483,7 +8199,7 @@ cmdline_parse_token_string_t cmd_mirror_mask_port =
 				port, "port");
 cmdline_parse_token_num_t cmd_mirror_mask_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_mirror_mask_result,
-				port_id, UINT8);
+				port_id, UINT16);
 cmdline_parse_token_string_t cmd_mirror_mask_mirror =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_mirror_mask_result,
 				mirror, "mirror-rule");
@@ -7581,7 +8297,7 @@ cmdline_parse_inst_t cmd_set_mirror_mask = {
 struct cmd_set_mirror_link_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t mirror;
 	uint8_t rule_id;
 	cmdline_fixed_string_t what;
@@ -7598,7 +8314,7 @@ cmdline_parse_token_string_t cmd_mirror_link_port =
 				port, "port");
 cmdline_parse_token_num_t cmd_mirror_link_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_mirror_link_result,
-				port_id, UINT8);
+				port_id, UINT16);
 cmdline_parse_token_string_t cmd_mirror_link_mirror =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_mirror_link_result,
 				mirror, "mirror-rule");
@@ -7671,7 +8387,7 @@ cmdline_parse_inst_t cmd_set_mirror_link = {
 struct cmd_rm_mirror_rule_result {
 	cmdline_fixed_string_t reset;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t mirror;
 	uint8_t rule_id;
 };
@@ -7684,7 +8400,7 @@ cmdline_parse_token_string_t cmd_rm_mirror_rule_port =
 				port, "port");
 cmdline_parse_token_num_t cmd_rm_mirror_rule_portid =
 	TOKEN_NUM_INITIALIZER(struct cmd_rm_mirror_rule_result,
-				port_id, UINT8);
+				port_id, UINT16);
 cmdline_parse_token_string_t cmd_rm_mirror_rule_mirror =
 	TOKEN_STRING_INITIALIZER(struct cmd_rm_mirror_rule_result,
 				mirror, "mirror-rule");
@@ -7829,7 +8545,7 @@ cmdline_parse_inst_t cmd_dump_one = {
 /* *** Add/Del syn filter *** */
 struct cmd_syn_filter_result {
 	cmdline_fixed_string_t filter;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t ops;
 	cmdline_fixed_string_t priority;
 	cmdline_fixed_string_t high;
@@ -7883,7 +8599,7 @@ cmdline_parse_token_string_t cmd_syn_filter_filter =
 	filter, "syn_filter");
 cmdline_parse_token_num_t cmd_syn_filter_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_syn_filter_result,
-	port_id, UINT8);
+	port_id, UINT16);
 cmdline_parse_token_string_t cmd_syn_filter_ops =
 	TOKEN_STRING_INITIALIZER(struct cmd_syn_filter_result,
 	ops, "add#del");
@@ -7917,10 +8633,452 @@ cmdline_parse_inst_t cmd_syn_filter = {
 	},
 };
 
+/* *** queue region set *** */
+struct cmd_queue_region_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t cmd;
+	cmdline_fixed_string_t region;
+	uint8_t  region_id;
+	cmdline_fixed_string_t queue_start_index;
+	uint8_t  queue_id;
+	cmdline_fixed_string_t queue_num;
+	uint8_t  queue_num_value;
+};
+
+static void
+cmd_queue_region_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_queue_region_result *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_queue_region_conf region_conf;
+	enum rte_pmd_i40e_queue_region_op op_type;
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	memset(&region_conf, 0, sizeof(region_conf));
+	op_type = RTE_PMD_I40E_RSS_QUEUE_REGION_SET;
+	region_conf.region_id = res->region_id;
+	region_conf.queue_num = res->queue_num_value;
+	region_conf.queue_start_index = res->queue_id;
+
+	ret = rte_pmd_i40e_rss_queue_region_conf(res->port_id,
+				op_type, &region_conf);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOTSUP:
+		printf("function not implemented or supported\n");
+		break;
+	default:
+		printf("queue region config error: (%s)\n", strerror(-ret));
+	}
+}
+
+cmdline_parse_token_string_t cmd_queue_region_set =
+TOKEN_STRING_INITIALIZER(struct cmd_queue_region_result,
+		set, "set");
+cmdline_parse_token_string_t cmd_queue_region_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_queue_region_result, port, "port");
+cmdline_parse_token_num_t cmd_queue_region_port_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_queue_region_result,
+				port_id, UINT16);
+cmdline_parse_token_string_t cmd_queue_region_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_queue_region_result,
+				 cmd, "queue-region");
+cmdline_parse_token_string_t cmd_queue_region_id =
+	TOKEN_STRING_INITIALIZER(struct cmd_queue_region_result,
+				region, "region_id");
+cmdline_parse_token_num_t cmd_queue_region_index =
+	TOKEN_NUM_INITIALIZER(struct cmd_queue_region_result,
+				region_id, UINT8);
+cmdline_parse_token_string_t cmd_queue_region_queue_start_index =
+	TOKEN_STRING_INITIALIZER(struct cmd_queue_region_result,
+				queue_start_index, "queue_start_index");
+cmdline_parse_token_num_t cmd_queue_region_queue_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_queue_region_result,
+				queue_id, UINT8);
+cmdline_parse_token_string_t cmd_queue_region_queue_num =
+	TOKEN_STRING_INITIALIZER(struct cmd_queue_region_result,
+				queue_num, "queue_num");
+cmdline_parse_token_num_t cmd_queue_region_queue_num_value =
+	TOKEN_NUM_INITIALIZER(struct cmd_queue_region_result,
+				queue_num_value, UINT8);
+
+cmdline_parse_inst_t cmd_queue_region = {
+	.f = cmd_queue_region_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> queue-region region_id <value> "
+		"queue_start_index <value> queue_num <value>: Set a queue region",
+	.tokens = {
+		(void *)&cmd_queue_region_set,
+		(void *)&cmd_queue_region_port,
+		(void *)&cmd_queue_region_port_id,
+		(void *)&cmd_queue_region_cmd,
+		(void *)&cmd_queue_region_id,
+		(void *)&cmd_queue_region_index,
+		(void *)&cmd_queue_region_queue_start_index,
+		(void *)&cmd_queue_region_queue_id,
+		(void *)&cmd_queue_region_queue_num,
+		(void *)&cmd_queue_region_queue_num_value,
+		NULL,
+	},
+};
+
+/* *** queue region and flowtype set *** */
+struct cmd_region_flowtype_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t cmd;
+	cmdline_fixed_string_t region;
+	uint8_t  region_id;
+	cmdline_fixed_string_t flowtype;
+	uint8_t  flowtype_id;
+};
+
+static void
+cmd_region_flowtype_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_region_flowtype_result *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_queue_region_conf region_conf;
+	enum rte_pmd_i40e_queue_region_op op_type;
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	memset(&region_conf, 0, sizeof(region_conf));
+
+	op_type = RTE_PMD_I40E_RSS_QUEUE_REGION_FLOWTYPE_SET;
+	region_conf.region_id = res->region_id;
+	region_conf.hw_flowtype = res->flowtype_id;
+
+	ret = rte_pmd_i40e_rss_queue_region_conf(res->port_id,
+			op_type, &region_conf);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOTSUP:
+		printf("function not implemented or supported\n");
+		break;
+	default:
+		printf("region flowtype config error: (%s)\n", strerror(-ret));
+	}
+}
+
+cmdline_parse_token_string_t cmd_region_flowtype_set =
+TOKEN_STRING_INITIALIZER(struct cmd_region_flowtype_result,
+				set, "set");
+cmdline_parse_token_string_t cmd_region_flowtype_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_region_flowtype_result,
+				port, "port");
+cmdline_parse_token_num_t cmd_region_flowtype_port_index =
+	TOKEN_NUM_INITIALIZER(struct cmd_region_flowtype_result,
+				port_id, UINT16);
+cmdline_parse_token_string_t cmd_region_flowtype_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_region_flowtype_result,
+				cmd, "queue-region");
+cmdline_parse_token_string_t cmd_region_flowtype_index =
+	TOKEN_STRING_INITIALIZER(struct cmd_region_flowtype_result,
+				region, "region_id");
+cmdline_parse_token_num_t cmd_region_flowtype_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_region_flowtype_result,
+				region_id, UINT8);
+cmdline_parse_token_string_t cmd_region_flowtype_flow_index =
+	TOKEN_STRING_INITIALIZER(struct cmd_region_flowtype_result,
+				flowtype, "flowtype");
+cmdline_parse_token_num_t cmd_region_flowtype_flow_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_region_flowtype_result,
+				flowtype_id, UINT8);
+cmdline_parse_inst_t cmd_region_flowtype = {
+	.f = cmd_region_flowtype_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> queue-region region_id <value> "
+		"flowtype <value>: Set a flowtype region index",
+	.tokens = {
+		(void *)&cmd_region_flowtype_set,
+		(void *)&cmd_region_flowtype_port,
+		(void *)&cmd_region_flowtype_port_index,
+		(void *)&cmd_region_flowtype_cmd,
+		(void *)&cmd_region_flowtype_index,
+		(void *)&cmd_region_flowtype_id,
+		(void *)&cmd_region_flowtype_flow_index,
+		(void *)&cmd_region_flowtype_flow_id,
+		NULL,
+	},
+};
+
+/* *** User Priority (UP) to queue region (region_id) set *** */
+struct cmd_user_priority_region_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t cmd;
+	cmdline_fixed_string_t user_priority;
+	uint8_t  user_priority_id;
+	cmdline_fixed_string_t region;
+	uint8_t  region_id;
+};
+
+static void
+cmd_user_priority_region_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_user_priority_region_result *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_queue_region_conf region_conf;
+	enum rte_pmd_i40e_queue_region_op op_type;
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	memset(&region_conf, 0, sizeof(region_conf));
+	op_type = RTE_PMD_I40E_RSS_QUEUE_REGION_USER_PRIORITY_SET;
+	region_conf.user_priority = res->user_priority_id;
+	region_conf.region_id = res->region_id;
+
+	ret = rte_pmd_i40e_rss_queue_region_conf(res->port_id,
+				op_type, &region_conf);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOTSUP:
+		printf("function not implemented or supported\n");
+		break;
+	default:
+		printf("user_priority region config error: (%s)\n",
+				strerror(-ret));
+	}
+}
+
+cmdline_parse_token_string_t cmd_user_priority_region_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_user_priority_region_result,
+				set, "set");
+cmdline_parse_token_string_t cmd_user_priority_region_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_user_priority_region_result,
+				port, "port");
+cmdline_parse_token_num_t cmd_user_priority_region_port_index =
+	TOKEN_NUM_INITIALIZER(struct cmd_user_priority_region_result,
+				port_id, UINT16);
+cmdline_parse_token_string_t cmd_user_priority_region_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_user_priority_region_result,
+				cmd, "queue-region");
+cmdline_parse_token_string_t cmd_user_priority_region_UP =
+	TOKEN_STRING_INITIALIZER(struct cmd_user_priority_region_result,
+				user_priority, "UP");
+cmdline_parse_token_num_t cmd_user_priority_region_UP_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_user_priority_region_result,
+				user_priority_id, UINT8);
+cmdline_parse_token_string_t cmd_user_priority_region_region =
+	TOKEN_STRING_INITIALIZER(struct cmd_user_priority_region_result,
+				region, "region_id");
+cmdline_parse_token_num_t cmd_user_priority_region_region_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_user_priority_region_result,
+				region_id, UINT8);
+
+cmdline_parse_inst_t cmd_user_priority_region = {
+	.f = cmd_user_priority_region_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> queue-region UP <value> "
+		"region_id <value>: Set the mapping of User Priority (UP) "
+		"to queue region (region_id) ",
+	.tokens = {
+		(void *)&cmd_user_priority_region_set,
+		(void *)&cmd_user_priority_region_port,
+		(void *)&cmd_user_priority_region_port_index,
+		(void *)&cmd_user_priority_region_cmd,
+		(void *)&cmd_user_priority_region_UP,
+		(void *)&cmd_user_priority_region_UP_id,
+		(void *)&cmd_user_priority_region_region,
+		(void *)&cmd_user_priority_region_region_id,
+		NULL,
+	},
+};
+
+/* *** flush all queue region related configuration *** */
+struct cmd_flush_queue_region_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t cmd;
+	cmdline_fixed_string_t flush;
+	cmdline_fixed_string_t what;
+};
+
+static void
+cmd_flush_queue_region_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_flush_queue_region_result *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_queue_region_conf region_conf;
+	enum rte_pmd_i40e_queue_region_op op_type;
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	memset(&region_conf, 0, sizeof(region_conf));
+
+	if (strcmp(res->what, "on") == 0)
+		op_type = RTE_PMD_I40E_RSS_QUEUE_REGION_ALL_FLUSH_ON;
+	else
+		op_type = RTE_PMD_I40E_RSS_QUEUE_REGION_ALL_FLUSH_OFF;
+
+	ret = rte_pmd_i40e_rss_queue_region_conf(res->port_id,
+				op_type, &region_conf);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOTSUP:
+		printf("function not implemented or supported\n");
+		break;
+	default:
+		printf("queue region config flush error: (%s)\n",
+				strerror(-ret));
+	}
+}
+
+cmdline_parse_token_string_t cmd_flush_queue_region_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_flush_queue_region_result,
+				set, "set");
+cmdline_parse_token_string_t cmd_flush_queue_region_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_flush_queue_region_result,
+				port, "port");
+cmdline_parse_token_num_t cmd_flush_queue_region_port_index =
+	TOKEN_NUM_INITIALIZER(struct cmd_flush_queue_region_result,
+				port_id, UINT16);
+cmdline_parse_token_string_t cmd_flush_queue_region_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_flush_queue_region_result,
+				cmd, "queue-region");
+cmdline_parse_token_string_t cmd_flush_queue_region_flush =
+	TOKEN_STRING_INITIALIZER(struct cmd_flush_queue_region_result,
+				flush, "flush");
+cmdline_parse_token_string_t cmd_flush_queue_region_what =
+	TOKEN_STRING_INITIALIZER(struct cmd_flush_queue_region_result,
+				what, "on#off");
+
+cmdline_parse_inst_t cmd_flush_queue_region = {
+	.f = cmd_flush_queue_region_parsed,
+	.data = NULL,
+	.help_str = "set port <port_id> queue-region flush on|off"
+		": flush all queue region related configuration",
+	.tokens = {
+		(void *)&cmd_flush_queue_region_set,
+		(void *)&cmd_flush_queue_region_port,
+		(void *)&cmd_flush_queue_region_port_index,
+		(void *)&cmd_flush_queue_region_cmd,
+		(void *)&cmd_flush_queue_region_flush,
+		(void *)&cmd_flush_queue_region_what,
+		NULL,
+	},
+};
+
+/* *** get all queue region related configuration info *** */
+struct cmd_show_queue_region_info {
+	cmdline_fixed_string_t show;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t cmd;
+};
+
+static void
+cmd_show_queue_region_info_parsed(void *parsed_result,
+			__attribute__((unused)) struct cmdline *cl,
+			__attribute__((unused)) void *data)
+{
+	struct cmd_show_queue_region_info *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_queue_regions rte_pmd_regions;
+	enum rte_pmd_i40e_queue_region_op op_type;
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	memset(&rte_pmd_regions, 0, sizeof(rte_pmd_regions));
+
+	op_type = RTE_PMD_I40E_RSS_QUEUE_REGION_INFO_GET;
+
+	ret = rte_pmd_i40e_rss_queue_region_conf(res->port_id,
+					op_type, &rte_pmd_regions);
+
+	port_queue_region_info_display(res->port_id, &rte_pmd_regions);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOTSUP:
+		printf("function not implemented or supported\n");
+		break;
+	default:
+		printf("queue region config info show error: (%s)\n",
+				strerror(-ret));
+	}
+}
+
+cmdline_parse_token_string_t cmd_show_queue_region_info_get =
+TOKEN_STRING_INITIALIZER(struct cmd_show_queue_region_info,
+				show, "show");
+cmdline_parse_token_string_t cmd_show_queue_region_info_port =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_queue_region_info,
+				port, "port");
+cmdline_parse_token_num_t cmd_show_queue_region_info_port_index =
+	TOKEN_NUM_INITIALIZER(struct cmd_show_queue_region_info,
+				port_id, UINT16);
+cmdline_parse_token_string_t cmd_show_queue_region_info_cmd =
+	TOKEN_STRING_INITIALIZER(struct cmd_show_queue_region_info,
+				cmd, "queue-region");
+
+cmdline_parse_inst_t cmd_show_queue_region_info_all = {
+	.f = cmd_show_queue_region_info_parsed,
+	.data = NULL,
+	.help_str = "show port <port_id> queue-region"
+		": show all queue region related configuration info",
+	.tokens = {
+		(void *)&cmd_show_queue_region_info_get,
+		(void *)&cmd_show_queue_region_info_port,
+		(void *)&cmd_show_queue_region_info_port_index,
+		(void *)&cmd_show_queue_region_info_cmd,
+		NULL,
+	},
+};
+
 /* *** ADD/REMOVE A 2tuple FILTER *** */
 struct cmd_2tuple_filter_result {
 	cmdline_fixed_string_t filter;
-	uint8_t  port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t ops;
 	cmdline_fixed_string_t dst_port;
 	uint16_t dst_port_value;
@@ -7999,7 +9157,7 @@ cmdline_parse_token_string_t cmd_2tuple_filter_filter =
 				 filter, "2tuple_filter");
 cmdline_parse_token_num_t cmd_2tuple_filter_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_2tuple_filter_result,
-				port_id, UINT8);
+				port_id, UINT16);
 cmdline_parse_token_string_t cmd_2tuple_filter_ops =
 	TOKEN_STRING_INITIALIZER(struct cmd_2tuple_filter_result,
 				 ops, "add#del");
@@ -8069,7 +9227,7 @@ cmdline_parse_inst_t cmd_2tuple_filter = {
 /* *** ADD/REMOVE A 5tuple FILTER *** */
 struct cmd_5tuple_filter_result {
 	cmdline_fixed_string_t filter;
-	uint8_t  port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t ops;
 	cmdline_fixed_string_t dst_ip;
 	cmdline_ipaddr_t dst_ip_value;
@@ -8178,7 +9336,7 @@ cmdline_parse_token_string_t cmd_5tuple_filter_filter =
 				 filter, "5tuple_filter");
 cmdline_parse_token_num_t cmd_5tuple_filter_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_5tuple_filter_result,
-				port_id, UINT8);
+				port_id, UINT16);
 cmdline_parse_token_string_t cmd_5tuple_filter_ops =
 	TOKEN_STRING_INITIALIZER(struct cmd_5tuple_filter_result,
 				 ops, "add#del");
@@ -8274,7 +9432,7 @@ cmdline_parse_inst_t cmd_5tuple_filter = {
 struct cmd_flex_filter_result {
 	cmdline_fixed_string_t filter;
 	cmdline_fixed_string_t ops;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t len;
 	uint8_t len_value;
 	cmdline_fixed_string_t bytes;
@@ -8401,7 +9559,7 @@ cmdline_parse_token_string_t cmd_flex_filter_filter =
 				filter, "flex_filter");
 cmdline_parse_token_num_t cmd_flex_filter_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_flex_filter_result,
-				port_id, UINT8);
+				port_id, UINT16);
 cmdline_parse_token_string_t cmd_flex_filter_ops =
 	TOKEN_STRING_INITIALIZER(struct cmd_flex_filter_result,
 				ops, "add#del");
@@ -8464,7 +9622,7 @@ cmdline_parse_inst_t cmd_flex_filter = {
 /* *** deal with ethertype filter *** */
 struct cmd_ethertype_filter_result {
 	cmdline_fixed_string_t filter;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t ops;
 	cmdline_fixed_string_t mac;
 	struct ether_addr mac_addr;
@@ -8480,7 +9638,7 @@ cmdline_parse_token_string_t cmd_ethertype_filter_filter =
 				 filter, "ethertype_filter");
 cmdline_parse_token_num_t cmd_ethertype_filter_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_ethertype_filter_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_ethertype_filter_ops =
 	TOKEN_STRING_INITIALIZER(struct cmd_ethertype_filter_result,
 				 ops, "add#del");
@@ -8526,7 +9684,7 @@ cmd_ethertype_filter_parsed(void *parsed_result,
 	memset(&filter, 0, sizeof(filter));
 	if (!strcmp(res->mac, "mac_addr")) {
 		filter.flags |= RTE_ETHTYPE_FLAGS_MAC;
-		(void)rte_memcpy(&filter.mac_addr, &res->mac_addr,
+		rte_memcpy(&filter.mac_addr, &res->mac_addr,
 			sizeof(struct ether_addr));
 	}
 	if (!strcmp(res->drop, "drop"))
@@ -8573,7 +9731,7 @@ cmdline_parse_inst_t cmd_ethertype_filter = {
 /* *** deal with flow director filter *** */
 struct cmd_flow_director_result {
 	cmdline_fixed_string_t flow_director_filter;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t mode;
 	cmdline_fixed_string_t mode_value;
 	cmdline_fixed_string_t ops;
@@ -8679,6 +9837,10 @@ str2flowtype(char *string)
 		if (!strcmp(flowtype_str[i].str, string))
 			return flowtype_str[i].type;
 	}
+
+	if (isdigit(string[0]) && atoi(string) > 0 && atoi(string) < 64)
+		return (uint16_t)atoi(string);
+
 	return RTE_ETH_FLOW_UNKNOWN;
 }
 
@@ -8715,7 +9877,7 @@ do { \
 #define IPV6_ADDR_TO_ARRAY(ip_addr, ip) \
 do { \
 	if ((ip_addr).family == AF_INET6) \
-		(void)rte_memcpy(&(ip), \
+		rte_memcpy(&(ip), \
 				 &((ip_addr).addr.ipv6), \
 				 sizeof(struct in6_addr)); \
 	else { \
@@ -8847,12 +10009,12 @@ cmd_flow_director_filter_parsed(void *parsed_result,
 	}
 
 	if (fdir_conf.mode ==  RTE_FDIR_MODE_PERFECT_MAC_VLAN)
-		(void)rte_memcpy(&entry.input.flow.mac_vlan_flow.mac_addr,
+		rte_memcpy(&entry.input.flow.mac_vlan_flow.mac_addr,
 				 &res->mac_addr,
 				 sizeof(struct ether_addr));
 
 	if (fdir_conf.mode ==  RTE_FDIR_MODE_PERFECT_TUNNEL) {
-		(void)rte_memcpy(&entry.input.flow.tunnel_flow.mac_addr,
+		rte_memcpy(&entry.input.flow.tunnel_flow.mac_addr,
 				 &res->mac_addr,
 				 sizeof(struct ether_addr));
 		entry.input.flow.tunnel_flow.tunnel_type =
@@ -8861,7 +10023,7 @@ cmd_flow_director_filter_parsed(void *parsed_result,
 			rte_cpu_to_be_32(res->tunnel_id_value);
 	}
 
-	(void)rte_memcpy(entry.input.flow_ext.flexbytes,
+	rte_memcpy(entry.input.flow_ext.flexbytes,
 		   flexbytes,
 		   RTE_ETH_FDIR_MAX_FLEXLEN);
 
@@ -8920,7 +10082,7 @@ cmdline_parse_token_string_t cmd_flow_director_filter =
 				 flow_director_filter, "flow_director_filter");
 cmdline_parse_token_num_t cmd_flow_director_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_flow_director_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_flow_director_ops =
 	TOKEN_STRING_INITIALIZER(struct cmd_flow_director_result,
 				 ops, "add#del#update");
@@ -9049,7 +10211,7 @@ cmdline_parse_inst_t cmd_add_del_ip_flow_director = {
 		"ipv6-other|ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|"
 		"l2_payload src <src_ip> dst <dst_ip> tos <tos_value> "
 		"proto <proto_value> ttl <ttl_value> vlan <vlan_value> "
-		"flexbytes <flexbyte_vaues> drop|fw <pf_vf> queue <queue_id> "
+		"flexbytes <flexbyte_values> drop|fw <pf_vf> queue <queue_id> "
 		"fd_id <fd_id_value>: "
 		"Add or delete an ip flow director entry on NIC",
 	.tokens = {
@@ -9245,7 +10407,7 @@ cmdline_parse_inst_t cmd_add_del_tunnel_flow_director = {
 
 struct cmd_flush_flow_director_result {
 	cmdline_fixed_string_t flush_flow_director;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 cmdline_parse_token_string_t cmd_flush_flow_director_flush =
@@ -9253,7 +10415,7 @@ cmdline_parse_token_string_t cmd_flush_flow_director_flush =
 				 flush_flow_director, "flush_flow_director");
 cmdline_parse_token_num_t cmd_flush_flow_director_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_flush_flow_director_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 
 static void
 cmd_flush_flow_director_parsed(void *parsed_result,
@@ -9292,7 +10454,7 @@ cmdline_parse_inst_t cmd_flush_flow_director = {
 /* *** deal with flow director mask *** */
 struct cmd_flow_director_mask_result {
 	cmdline_fixed_string_t flow_director_mask;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t mode;
 	cmdline_fixed_string_t mode_value;
 	cmdline_fixed_string_t vlan;
@@ -9376,7 +10538,7 @@ cmdline_parse_token_string_t cmd_flow_director_mask =
 				 flow_director_mask, "flow_director_mask");
 cmdline_parse_token_num_t cmd_flow_director_mask_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_flow_director_mask_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_flow_director_mask_vlan =
 	TOKEN_STRING_INITIALIZER(struct cmd_flow_director_mask_result,
 				 vlan, "vlan");
@@ -9504,7 +10666,7 @@ cmdline_parse_inst_t cmd_set_flow_director_tunnel_mask = {
 /* *** deal with flow director mask on flexible payload *** */
 struct cmd_flow_director_flex_mask_result {
 	cmdline_fixed_string_t flow_director_flexmask;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t flow;
 	cmdline_fixed_string_t flow_type;
 	cmdline_fixed_string_t mask;
@@ -9559,7 +10721,7 @@ cmd_flow_director_flex_mask_parsed(void *parsed_result,
 			memset(&port->dev_conf.fdir_conf.flex_conf.flex_mask[i],
 			       0, sizeof(struct rte_eth_fdir_flex_mask));
 		port->dev_conf.fdir_conf.flex_conf.nb_flexmasks = 1;
-		(void)rte_memcpy(&port->dev_conf.fdir_conf.flex_conf.flex_mask[0],
+		rte_memcpy(&port->dev_conf.fdir_conf.flex_conf.flex_mask[0],
 				 &flex_mask,
 				 sizeof(struct rte_eth_fdir_flex_mask));
 		cmd_reconfig_device_queue(res->port_id, 1, 1);
@@ -9596,7 +10758,7 @@ cmdline_parse_token_string_t cmd_flow_director_flexmask =
 				 "flow_director_flex_mask");
 cmdline_parse_token_num_t cmd_flow_director_flexmask_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_flow_director_flex_mask_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_flow_director_flexmask_flow =
 	TOKEN_STRING_INITIALIZER(struct cmd_flow_director_flex_mask_result,
 				 flow, "flow");
@@ -9626,7 +10788,7 @@ cmdline_parse_inst_t cmd_set_flow_director_flex_mask = {
 /* *** deal with flow director flexible payload configuration *** */
 struct cmd_flow_director_flexpayload_result {
 	cmdline_fixed_string_t flow_director_flexpayload;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t payload_layer;
 	cmdline_fixed_string_t payload_cfg;
 };
@@ -9719,7 +10881,7 @@ cmdline_parse_token_string_t cmd_flow_director_flexpayload =
 				 "flow_director_flex_payload");
 cmdline_parse_token_num_t cmd_flow_director_flexpayload_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_flow_director_flexpayload_result,
-			      port_id, UINT8);
+			      port_id, UINT16);
 cmdline_parse_token_string_t cmd_flow_director_flexpayload_payload_layer =
 	TOKEN_STRING_INITIALIZER(struct cmd_flow_director_flexpayload_result,
 				 payload_layer, "raw#l2#l3#l4");
@@ -9748,7 +10910,7 @@ extern cmdline_parse_inst_t cmd_flow;
 /* *** Get symmetric hash enable per port *** */
 struct cmd_get_sym_hash_ena_per_port_result {
 	cmdline_fixed_string_t get_sym_hash_ena_per_port;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -9787,7 +10949,7 @@ cmdline_parse_token_string_t cmd_get_sym_hash_ena_per_port_all =
 		get_sym_hash_ena_per_port, "get_sym_hash_ena_per_port");
 cmdline_parse_token_num_t cmd_get_sym_hash_ena_per_port_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_get_sym_hash_ena_per_port_result,
-		port_id, UINT8);
+		port_id, UINT16);
 
 cmdline_parse_inst_t cmd_get_sym_hash_ena_per_port = {
 	.f = cmd_get_sym_hash_per_port_parsed,
@@ -9804,7 +10966,7 @@ cmdline_parse_inst_t cmd_get_sym_hash_ena_per_port = {
 struct cmd_set_sym_hash_ena_per_port_result {
 	cmdline_fixed_string_t set_sym_hash_ena_per_port;
 	cmdline_fixed_string_t enable;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static void
@@ -9843,7 +11005,7 @@ cmdline_parse_token_string_t cmd_set_sym_hash_ena_per_port_all =
 		set_sym_hash_ena_per_port, "set_sym_hash_ena_per_port");
 cmdline_parse_token_num_t cmd_set_sym_hash_ena_per_port_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_sym_hash_ena_per_port_result,
-		port_id, UINT8);
+		port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_sym_hash_ena_per_port_enable =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_sym_hash_ena_per_port_result,
 		enable, "enable#disable");
@@ -9863,7 +11025,7 @@ cmdline_parse_inst_t cmd_set_sym_hash_ena_per_port = {
 /* Get global config of hash function */
 struct cmd_get_hash_global_config_result {
 	cmdline_fixed_string_t get_hash_global_config;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 static char *
@@ -9964,7 +11126,7 @@ cmdline_parse_token_string_t cmd_get_hash_global_config_all =
 		get_hash_global_config, "get_hash_global_config");
 cmdline_parse_token_num_t cmd_get_hash_global_config_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_get_hash_global_config_result,
-		port_id, UINT8);
+		port_id, UINT16);
 
 cmdline_parse_inst_t cmd_get_hash_global_config = {
 	.f = cmd_get_hash_global_config_parsed,
@@ -9980,7 +11142,7 @@ cmdline_parse_inst_t cmd_get_hash_global_config = {
 /* Set global config of hash function */
 struct cmd_set_hash_global_config_result {
 	cmdline_fixed_string_t set_hash_global_config;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t hash_func;
 	cmdline_fixed_string_t flow_type;
 	cmdline_fixed_string_t enable;
@@ -10036,7 +11198,7 @@ cmdline_parse_token_string_t cmd_set_hash_global_config_all =
 		set_hash_global_config, "set_hash_global_config");
 cmdline_parse_token_num_t cmd_set_hash_global_config_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_hash_global_config_result,
-		port_id, UINT8);
+		port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_hash_global_config_hash_func =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_hash_global_config_result,
 		hash_func, "toeplitz#simple_xor#default");
@@ -10070,7 +11232,7 @@ cmdline_parse_inst_t cmd_set_hash_global_config = {
 /* Set hash input set */
 struct cmd_set_hash_input_set_result {
 	cmdline_fixed_string_t set_hash_input_set;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t flow_type;
 	cmdline_fixed_string_t inset_field;
 	cmdline_fixed_string_t select;
@@ -10152,12 +11314,10 @@ cmdline_parse_token_string_t cmd_set_hash_input_set_cmd =
 		set_hash_input_set, "set_hash_input_set");
 cmdline_parse_token_num_t cmd_set_hash_input_set_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_hash_input_set_result,
-		port_id, UINT8);
+		port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_hash_input_set_flow_type =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_hash_input_set_result,
-		flow_type,
-		"ipv4-frag#ipv4-tcp#ipv4-udp#ipv4-sctp#ipv4-other#"
-		"ipv6-frag#ipv6-tcp#ipv6-udp#ipv6-sctp#ipv6-other#l2_payload");
+		flow_type, NULL);
 cmdline_parse_token_string_t cmd_set_hash_input_set_field =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_hash_input_set_result,
 		inset_field,
@@ -10176,7 +11336,7 @@ cmdline_parse_inst_t cmd_set_hash_input_set = {
 	.data = NULL,
 	.help_str = "set_hash_input_set <port_id> "
 	"ipv4-frag|ipv4-tcp|ipv4-udp|ipv4-sctp|ipv4-other|"
-	"ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|ipv6-other|l2_payload "
+	"ipv6-frag|ipv6-tcp|ipv6-udp|ipv6-sctp|ipv6-other|l2_payload|<flowtype_id> "
 	"ovlan|ivlan|src-ipv4|dst-ipv4|src-ipv6|dst-ipv6|ipv4-tos|ipv4-proto|"
 	"ipv6-tc|ipv6-next-header|udp-src-port|udp-dst-port|tcp-src-port|"
 	"tcp-dst-port|sctp-src-port|sctp-dst-port|sctp-veri-tag|udp-key|"
@@ -10195,7 +11355,7 @@ cmdline_parse_inst_t cmd_set_hash_input_set = {
 /* Set flow director input set */
 struct cmd_set_fdir_input_set_result {
 	cmdline_fixed_string_t set_fdir_input_set;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t flow_type;
 	cmdline_fixed_string_t inset_field;
 	cmdline_fixed_string_t select;
@@ -10227,7 +11387,7 @@ cmdline_parse_token_string_t cmd_set_fdir_input_set_cmd =
 	set_fdir_input_set, "set_fdir_input_set");
 cmdline_parse_token_num_t cmd_set_fdir_input_set_port_id =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_fdir_input_set_result,
-	port_id, UINT8);
+	port_id, UINT16);
 cmdline_parse_token_string_t cmd_set_fdir_input_set_flow_type =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_fdir_input_set_result,
 	flow_type,
@@ -10270,7 +11430,7 @@ cmdline_parse_inst_t cmd_set_fdir_input_set = {
 struct cmd_mcast_addr_result {
 	cmdline_fixed_string_t mcast_addr_cmd;
 	cmdline_fixed_string_t what;
-	uint8_t port_num;
+	uint16_t port_num;
 	struct ether_addr mc_addr;
 };
 
@@ -10300,7 +11460,7 @@ cmdline_parse_token_string_t cmd_mcast_addr_what =
 	TOKEN_STRING_INITIALIZER(struct cmd_mcast_addr_result, what,
 				 "add#remove");
 cmdline_parse_token_num_t cmd_mcast_addr_portnum =
-	TOKEN_NUM_INITIALIZER(struct cmd_mcast_addr_result, port_num, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_mcast_addr_result, port_num, UINT16);
 cmdline_parse_token_etheraddr_t cmd_mcast_addr_addr =
 	TOKEN_ETHERADDR_INITIALIZER(struct cmd_mac_addr_result, address);
 
@@ -10604,7 +11764,7 @@ struct cmd_config_e_tag_result {
 	cmdline_fixed_string_t dst_pool;
 	uint8_t dst_pool_val;
 	cmdline_fixed_string_t port;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t vf;
 	uint8_t vf_id;
 };
@@ -10685,7 +11845,7 @@ cmdline_parse_token_string_t cmd_config_e_tag_port =
 cmdline_parse_token_num_t cmd_config_e_tag_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_config_e_tag_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_string_t cmd_config_e_tag_vf =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_config_e_tag_result,
@@ -10987,7 +12147,7 @@ struct cmd_vf_vlan_anti_spoof_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t vlan;
 	cmdline_fixed_string_t antispoof;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -11012,7 +12172,7 @@ cmdline_parse_token_string_t cmd_vf_vlan_anti_spoof_antispoof =
 cmdline_parse_token_num_t cmd_vf_vlan_anti_spoof_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_vlan_anti_spoof_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_vlan_anti_spoof_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_vlan_anti_spoof_result,
@@ -11093,7 +12253,7 @@ struct cmd_vf_mac_anti_spoof_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t mac;
 	cmdline_fixed_string_t antispoof;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -11118,7 +12278,7 @@ cmdline_parse_token_string_t cmd_vf_mac_anti_spoof_antispoof =
 cmdline_parse_token_num_t cmd_vf_mac_anti_spoof_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_mac_anti_spoof_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_mac_anti_spoof_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_mac_anti_spoof_result,
@@ -11199,7 +12359,7 @@ struct cmd_vf_vlan_stripq_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t vlan;
 	cmdline_fixed_string_t stripq;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -11224,7 +12384,7 @@ cmdline_parse_token_string_t cmd_vf_vlan_stripq_stripq =
 cmdline_parse_token_num_t cmd_vf_vlan_stripq_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_vlan_stripq_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_vlan_stripq_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_vlan_stripq_result,
@@ -11305,7 +12465,7 @@ struct cmd_vf_vlan_insert_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t vlan;
 	cmdline_fixed_string_t insert;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	uint16_t vlan_id;
 };
@@ -11330,7 +12490,7 @@ cmdline_parse_token_string_t cmd_vf_vlan_insert_insert =
 cmdline_parse_token_num_t cmd_vf_vlan_insert_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_vlan_insert_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_vlan_insert_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_vlan_insert_result,
@@ -11408,7 +12568,7 @@ struct cmd_tx_loopback_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t tx;
 	cmdline_fixed_string_t loopback;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t on_off;
 };
 
@@ -11428,7 +12588,7 @@ cmdline_parse_token_string_t cmd_tx_loopback_loopback =
 cmdline_parse_token_num_t cmd_tx_loopback_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_tx_loopback_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_string_t cmd_tx_loopback_on_off =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_tx_loopback_result,
@@ -11500,7 +12660,7 @@ struct cmd_all_queues_drop_en_result {
 	cmdline_fixed_string_t all;
 	cmdline_fixed_string_t queues;
 	cmdline_fixed_string_t drop;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t on_off;
 };
 
@@ -11524,7 +12684,7 @@ cmdline_parse_token_string_t cmd_all_queues_drop_en_drop =
 cmdline_parse_token_num_t cmd_all_queues_drop_en_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_all_queues_drop_en_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_string_t cmd_all_queues_drop_en_on_off =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_all_queues_drop_en_result,
@@ -11583,7 +12743,6 @@ cmdline_parse_inst_t cmd_set_all_queues_drop_en = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* vf split drop enable configuration */
 
 /* Common result structure for vf split drop enable */
@@ -11592,7 +12751,7 @@ struct cmd_vf_split_drop_en_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t split;
 	cmdline_fixed_string_t drop;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -11617,7 +12776,7 @@ cmdline_parse_token_string_t cmd_vf_split_drop_en_drop =
 cmdline_parse_token_num_t cmd_vf_split_drop_en_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_split_drop_en_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_split_drop_en_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_split_drop_en_result,
@@ -11634,14 +12793,16 @@ cmd_set_vf_split_drop_en_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_vf_split_drop_en_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	int is_on = (strcmp(res->on_off, "on") == 0) ? 1 : 0;
 
 	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
 		return;
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = rte_pmd_ixgbe_set_vf_split_drop_en(res->port_id, res->vf_id,
 			is_on);
+#endif
 	switch (ret) {
 	case 0:
 		break;
@@ -11650,6 +12811,9 @@ cmd_set_vf_split_drop_en_parsed(
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", res->port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -11671,7 +12835,6 @@ cmdline_parse_inst_t cmd_set_vf_split_drop_en = {
 		NULL,
 	},
 };
-#endif
 
 /* vf mac address configuration */
 
@@ -11681,7 +12844,7 @@ struct cmd_set_vf_mac_addr_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t mac;
 	cmdline_fixed_string_t addr;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	struct ether_addr mac_addr;
 
@@ -11707,7 +12870,7 @@ cmdline_parse_token_string_t cmd_set_vf_mac_addr_addr =
 cmdline_parse_token_num_t cmd_set_vf_mac_addr_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_set_vf_mac_addr_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_set_vf_mac_addr_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_set_vf_mac_addr_result,
@@ -11777,7 +12940,6 @@ cmdline_parse_inst_t cmd_set_vf_mac_addr = {
 	},
 };
 
-#ifdef RTE_LIBRTE_IXGBE_PMD
 /* MACsec configuration */
 
 /* Common result structure for MACsec offload enable */
@@ -11785,7 +12947,7 @@ struct cmd_macsec_offload_on_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t macsec;
 	cmdline_fixed_string_t offload;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t on;
 	cmdline_fixed_string_t encrypt;
 	cmdline_fixed_string_t en_on_off;
@@ -11809,7 +12971,7 @@ cmdline_parse_token_string_t cmd_macsec_offload_on_offload =
 cmdline_parse_token_num_t cmd_macsec_offload_on_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_macsec_offload_on_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_string_t cmd_macsec_offload_on_on =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_macsec_offload_on_result,
@@ -11838,7 +13000,7 @@ cmd_set_macsec_offload_on_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_offload_on_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	portid_t port_id = res->port_id;
 	int en = (strcmp(res->en_on_off, "on") == 0) ? 1 : 0;
 	int rp = (strcmp(res->rp_on_off, "on") == 0) ? 1 : 0;
@@ -11847,13 +13009,20 @@ cmd_set_macsec_offload_on_parsed(
 		return;
 
 	ports[port_id].tx_ol_flags |= TESTPMD_TX_OFFLOAD_MACSEC;
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = rte_pmd_ixgbe_macsec_enable(port_id, en, rp);
+#endif
+	RTE_SET_USED(en);
+	RTE_SET_USED(rp);
 
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -11884,7 +13053,7 @@ struct cmd_macsec_offload_off_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t macsec;
 	cmdline_fixed_string_t offload;
-	uint8_t port_id;
+	portid_t port_id;
 	cmdline_fixed_string_t off;
 };
 
@@ -11904,7 +13073,7 @@ cmdline_parse_token_string_t cmd_macsec_offload_off_offload =
 cmdline_parse_token_num_t cmd_macsec_offload_off_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_macsec_offload_off_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_string_t cmd_macsec_offload_off_off =
 	TOKEN_STRING_INITIALIZER
 		(struct cmd_macsec_offload_off_result,
@@ -11917,20 +13086,25 @@ cmd_set_macsec_offload_off_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_offload_off_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	portid_t port_id = res->port_id;
 
 	if (port_id_is_invalid(port_id, ENABLED_WARN))
 		return;
 
 	ports[port_id].tx_ol_flags &= ~TESTPMD_TX_OFFLOAD_MACSEC;
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = rte_pmd_ixgbe_macsec_disable(port_id);
+#endif
 
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -11957,7 +13131,7 @@ struct cmd_macsec_sc_result {
 	cmdline_fixed_string_t macsec;
 	cmdline_fixed_string_t sc;
 	cmdline_fixed_string_t tx_rx;
-	uint8_t port_id;
+	portid_t port_id;
 	struct ether_addr mac;
 	uint16_t pi;
 };
@@ -11982,7 +13156,7 @@ cmdline_parse_token_string_t cmd_macsec_sc_tx_rx =
 cmdline_parse_token_num_t cmd_macsec_sc_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_macsec_sc_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_etheraddr_t cmd_macsec_sc_mac =
 	TOKEN_ETHERADDR_INITIALIZER
 		(struct cmd_macsec_sc_result,
@@ -11999,19 +13173,26 @@ cmd_set_macsec_sc_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_sc_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	int is_tx = (strcmp(res->tx_rx, "tx") == 0) ? 1 : 0;
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = is_tx ?
 		rte_pmd_ixgbe_macsec_config_txsc(res->port_id,
 				res->mac.addr_bytes) :
 		rte_pmd_ixgbe_macsec_config_rxsc(res->port_id,
 				res->mac.addr_bytes, res->pi);
+#endif
+	RTE_SET_USED(is_tx);
+
 	switch (ret) {
 	case 0:
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", res->port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -12040,7 +13221,7 @@ struct cmd_macsec_sa_result {
 	cmdline_fixed_string_t macsec;
 	cmdline_fixed_string_t sa;
 	cmdline_fixed_string_t tx_rx;
-	uint8_t port_id;
+	portid_t port_id;
 	uint8_t idx;
 	uint8_t an;
 	uint32_t pn;
@@ -12067,7 +13248,7 @@ cmdline_parse_token_string_t cmd_macsec_sa_tx_rx =
 cmdline_parse_token_num_t cmd_macsec_sa_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_macsec_sa_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_macsec_sa_idx =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_macsec_sa_result,
@@ -12092,7 +13273,7 @@ cmd_set_macsec_sa_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_macsec_sa_result *res = parsed_result;
-	int ret;
+	int ret = -ENOTSUP;
 	int is_tx = (strcmp(res->tx_rx, "tx") == 0) ? 1 : 0;
 	uint8_t key[16] = { 0 };
 	uint8_t xdgt0;
@@ -12114,11 +13295,16 @@ cmd_set_macsec_sa_parsed(
 		key[i] = (uint8_t) ((xdgt0 * 16) + xdgt1);
 	}
 
+#ifdef RTE_LIBRTE_IXGBE_PMD
 	ret = is_tx ?
 		rte_pmd_ixgbe_macsec_select_txsa(res->port_id,
 			res->idx, res->an, res->pn, key) :
 		rte_pmd_ixgbe_macsec_select_rxsa(res->port_id,
 			res->idx, res->an, res->pn, key);
+#endif
+	RTE_SET_USED(is_tx);
+	RTE_SET_USED(key);
+
 	switch (ret) {
 	case 0:
 		break;
@@ -12127,6 +13313,9 @@ cmd_set_macsec_sa_parsed(
 		break;
 	case -ENODEV:
 		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("not supported on port %d\n", res->port_id);
 		break;
 	default:
 		printf("programming error: (%s)\n", strerror(-ret));
@@ -12150,7 +13339,6 @@ cmdline_parse_inst_t cmd_set_macsec_sa = {
 		NULL,
 	},
 };
-#endif
 
 /* VF unicast promiscuous mode configuration */
 
@@ -12159,7 +13347,7 @@ struct cmd_vf_promisc_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t promisc;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -12180,7 +13368,7 @@ cmdline_parse_token_string_t cmd_vf_promisc_promisc =
 cmdline_parse_token_num_t cmd_vf_promisc_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_promisc_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_promisc_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_promisc_result,
@@ -12249,7 +13437,7 @@ struct cmd_vf_allmulti_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t allmulti;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -12270,7 +13458,7 @@ cmdline_parse_token_string_t cmd_vf_allmulti_allmulti =
 cmdline_parse_token_num_t cmd_vf_allmulti_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_allmulti_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_allmulti_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_allmulti_result,
@@ -12339,7 +13527,7 @@ struct cmd_set_vf_broadcast_result {
 	cmdline_fixed_string_t set;
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t broadcast;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -12360,7 +13548,7 @@ cmdline_parse_token_string_t cmd_set_vf_broadcast_broadcast =
 cmdline_parse_token_num_t cmd_set_vf_broadcast_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_set_vf_broadcast_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_set_vf_broadcast_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_set_vf_broadcast_result,
@@ -12429,7 +13617,7 @@ struct cmd_set_vf_vlan_tag_result {
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t vlan;
 	cmdline_fixed_string_t tag;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	cmdline_fixed_string_t on_off;
 };
@@ -12454,7 +13642,7 @@ cmdline_parse_token_string_t cmd_set_vf_vlan_tag_tag =
 cmdline_parse_token_num_t cmd_set_vf_vlan_tag_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_set_vf_vlan_tag_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_set_vf_vlan_tag_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_set_vf_vlan_tag_result,
@@ -12525,7 +13713,7 @@ struct cmd_vf_tc_bw_result {
 	cmdline_fixed_string_t min_bw;
 	cmdline_fixed_string_t max_bw;
 	cmdline_fixed_string_t strict_link_prio;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 	uint8_t tc_no;
 	uint32_t bw;
@@ -12564,7 +13752,7 @@ cmdline_parse_token_string_t cmd_vf_tc_bw_max_bw =
 cmdline_parse_token_num_t cmd_vf_tc_bw_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_tc_bw_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_vf_tc_bw_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_vf_tc_bw_result,
@@ -12856,6 +14044,86 @@ cmdline_parse_inst_t cmd_vf_tc_max_bw = {
 	},
 };
 
+
+#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
+
+/* *** Set Port default Traffic Management Hierarchy *** */
+struct cmd_set_port_tm_hierarchy_default_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t tm;
+	cmdline_fixed_string_t hierarchy;
+	cmdline_fixed_string_t def;
+	portid_t port_id;
+};
+
+cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_set =
+	TOKEN_STRING_INITIALIZER(
+		struct cmd_set_port_tm_hierarchy_default_result, set, "set");
+cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_port =
+	TOKEN_STRING_INITIALIZER(
+		struct cmd_set_port_tm_hierarchy_default_result, port, "port");
+cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_tm =
+	TOKEN_STRING_INITIALIZER(
+		struct cmd_set_port_tm_hierarchy_default_result, tm, "tm");
+cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_hierarchy =
+	TOKEN_STRING_INITIALIZER(
+		struct cmd_set_port_tm_hierarchy_default_result,
+			hierarchy, "hierarchy");
+cmdline_parse_token_string_t cmd_set_port_tm_hierarchy_default_default =
+	TOKEN_STRING_INITIALIZER(
+		struct cmd_set_port_tm_hierarchy_default_result,
+			def, "default");
+cmdline_parse_token_num_t cmd_set_port_tm_hierarchy_default_port_id =
+	TOKEN_NUM_INITIALIZER(
+		struct cmd_set_port_tm_hierarchy_default_result,
+			port_id, UINT16);
+
+static void cmd_set_port_tm_hierarchy_default_parsed(void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_set_port_tm_hierarchy_default_result *res = parsed_result;
+	struct rte_port *p;
+	portid_t port_id = res->port_id;
+
+	if (port_id_is_invalid(port_id, ENABLED_WARN))
+		return;
+
+	p = &ports[port_id];
+
+	/* Port tm flag */
+	if (p->softport.tm_flag == 0) {
+		printf("  tm not enabled on port %u (error)\n", port_id);
+		return;
+	}
+
+	/* Forward mode: tm */
+	if (strcmp(cur_fwd_config.fwd_eng->fwd_mode_name, "tm")) {
+		printf("  tm mode not enabled(error)\n");
+		return;
+	}
+
+	/* Set the default tm hierarchy */
+	p->softport.tm.default_hierarchy_enable = 1;
+}
+
+cmdline_parse_inst_t cmd_set_port_tm_hierarchy_default = {
+	.f = cmd_set_port_tm_hierarchy_default_parsed,
+	.data = NULL,
+	.help_str = "set port tm hierarchy default <port_id>",
+	.tokens = {
+		(void *)&cmd_set_port_tm_hierarchy_default_set,
+		(void *)&cmd_set_port_tm_hierarchy_default_port,
+		(void *)&cmd_set_port_tm_hierarchy_default_tm,
+		(void *)&cmd_set_port_tm_hierarchy_default_hierarchy,
+		(void *)&cmd_set_port_tm_hierarchy_default_default,
+		(void *)&cmd_set_port_tm_hierarchy_default_port_id,
+		NULL,
+	},
+};
+#endif
+
 /* Strict link priority scheduling mode setting */
 static void
 cmd_strict_link_prio_parsed(
@@ -12908,7 +14176,7 @@ cmdline_parse_inst_t cmd_strict_link_prio = {
 struct cmd_ddp_add_result {
 	cmdline_fixed_string_t ddp;
 	cmdline_fixed_string_t add;
-	uint8_t port_id;
+	portid_t port_id;
 	char filepath[];
 };
 
@@ -12917,7 +14185,7 @@ cmdline_parse_token_string_t cmd_ddp_add_ddp =
 cmdline_parse_token_string_t cmd_ddp_add_add =
 	TOKEN_STRING_INITIALIZER(struct cmd_ddp_add_result, add, "add");
 cmdline_parse_token_num_t cmd_ddp_add_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_ddp_add_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_ddp_add_result, port_id, UINT16);
 cmdline_parse_token_string_t cmd_ddp_add_filepath =
 	TOKEN_STRING_INITIALIZER(struct cmd_ddp_add_result, filepath, NULL);
 
@@ -12928,6 +14196,91 @@ cmd_ddp_add_parsed(
 	__attribute__((unused)) void *data)
 {
 	struct cmd_ddp_add_result *res = parsed_result;
+	uint8_t *buff;
+	uint32_t size;
+	char *filepath;
+	char *file_fld[2];
+	int file_num;
+	int ret = -ENOTSUP;
+
+	if (res->port_id > nb_ports) {
+		printf("Invalid port, range is [0, %d]\n", nb_ports - 1);
+		return;
+	}
+
+	if (!all_ports_stopped()) {
+		printf("Please stop all ports first\n");
+		return;
+	}
+
+	filepath = strdup(res->filepath);
+	if (filepath == NULL) {
+		printf("Failed to allocate memory\n");
+		return;
+	}
+	file_num = rte_strsplit(filepath, strlen(filepath), file_fld, 2, ',');
+
+	buff = open_ddp_package_file(file_fld[0], &size);
+	if (!buff) {
+		free((void *)filepath);
+		return;
+	}
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	if (ret == -ENOTSUP)
+		ret = rte_pmd_i40e_process_ddp_package(res->port_id,
+					       buff, size,
+					       RTE_PMD_I40E_PKG_OP_WR_ADD);
+#endif
+
+	if (ret == -EEXIST)
+		printf("Profile has already existed.\n");
+	else if (ret < 0)
+		printf("Failed to load profile.\n");
+	else if (file_num == 2)
+		save_ddp_package_file(file_fld[1], buff, size);
+
+	close_ddp_package_file(buff);
+	free((void *)filepath);
+}
+
+cmdline_parse_inst_t cmd_ddp_add = {
+	.f = cmd_ddp_add_parsed,
+	.data = NULL,
+	.help_str = "ddp add <port_id> <profile_path[,output_path]>",
+	.tokens = {
+		(void *)&cmd_ddp_add_ddp,
+		(void *)&cmd_ddp_add_add,
+		(void *)&cmd_ddp_add_port_id,
+		(void *)&cmd_ddp_add_filepath,
+		NULL,
+	},
+};
+
+/* Delete dynamic device personalization*/
+struct cmd_ddp_del_result {
+	cmdline_fixed_string_t ddp;
+	cmdline_fixed_string_t del;
+	portid_t port_id;
+	char filepath[];
+};
+
+cmdline_parse_token_string_t cmd_ddp_del_ddp =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_del_result, ddp, "ddp");
+cmdline_parse_token_string_t cmd_ddp_del_del =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_del_result, del, "del");
+cmdline_parse_token_num_t cmd_ddp_del_port_id =
+	TOKEN_NUM_INITIALIZER(struct cmd_ddp_del_result, port_id, UINT16);
+cmdline_parse_token_string_t cmd_ddp_del_filepath =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_del_result, filepath, NULL);
+
+static void
+cmd_ddp_del_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_ddp_del_result *res = parsed_result;
 	uint8_t *buff;
 	uint32_t size;
 	int ret = -ENOTSUP;
@@ -12950,26 +14303,263 @@ cmd_ddp_add_parsed(
 	if (ret == -ENOTSUP)
 		ret = rte_pmd_i40e_process_ddp_package(res->port_id,
 					       buff, size,
-					       RTE_PMD_I40E_PKG_OP_WR_ADD);
+					       RTE_PMD_I40E_PKG_OP_WR_DEL);
 #endif
 
-	if (ret < 0)
-		printf("Failed to load profile.\n");
-	else if (ret > 0)
-		printf("Profile has already existed.\n");
+	if (ret == -EACCES)
+		printf("Profile does not exist.\n");
+	else if (ret < 0)
+		printf("Failed to delete profile.\n");
 
 	close_ddp_package_file(buff);
 }
 
-cmdline_parse_inst_t cmd_ddp_add = {
-	.f = cmd_ddp_add_parsed,
+cmdline_parse_inst_t cmd_ddp_del = {
+	.f = cmd_ddp_del_parsed,
 	.data = NULL,
-	.help_str = "ddp add <port_id> <profile_path>",
+	.help_str = "ddp del <port_id> <profile_path>",
 	.tokens = {
-		(void *)&cmd_ddp_add_ddp,
-		(void *)&cmd_ddp_add_add,
-		(void *)&cmd_ddp_add_port_id,
-		(void *)&cmd_ddp_add_filepath,
+		(void *)&cmd_ddp_del_ddp,
+		(void *)&cmd_ddp_del_del,
+		(void *)&cmd_ddp_del_port_id,
+		(void *)&cmd_ddp_del_filepath,
+		NULL,
+	},
+};
+
+/* Get dynamic device personalization profile info */
+struct cmd_ddp_info_result {
+	cmdline_fixed_string_t ddp;
+	cmdline_fixed_string_t get;
+	cmdline_fixed_string_t info;
+	char filepath[];
+};
+
+cmdline_parse_token_string_t cmd_ddp_info_ddp =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, ddp, "ddp");
+cmdline_parse_token_string_t cmd_ddp_info_get =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, get, "get");
+cmdline_parse_token_string_t cmd_ddp_info_info =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, info, "info");
+cmdline_parse_token_string_t cmd_ddp_info_filepath =
+	TOKEN_STRING_INITIALIZER(struct cmd_ddp_info_result, filepath, NULL);
+
+static void
+cmd_ddp_info_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_ddp_info_result *res = parsed_result;
+	uint8_t *pkg;
+	uint32_t pkg_size;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	uint32_t i, j, n;
+	uint8_t *buff;
+	uint32_t buff_size = 0;
+	struct rte_pmd_i40e_profile_info info;
+	uint32_t dev_num = 0;
+	struct rte_pmd_i40e_ddp_device_id *devs;
+	uint32_t proto_num = 0;
+	struct rte_pmd_i40e_proto_info *proto = NULL;
+	uint32_t pctype_num = 0;
+	struct rte_pmd_i40e_ptype_info *pctype;
+	uint32_t ptype_num = 0;
+	struct rte_pmd_i40e_ptype_info *ptype;
+	uint8_t proto_id;
+
+#endif
+
+	pkg = open_ddp_package_file(res->filepath, &pkg_size);
+	if (!pkg)
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&info, sizeof(info),
+				RTE_PMD_I40E_PKG_INFO_GLOBAL_HEADER);
+	if (!ret) {
+		printf("Global Track id:       0x%x\n", info.track_id);
+		printf("Global Version:        %d.%d.%d.%d\n",
+			info.version.major,
+			info.version.minor,
+			info.version.update,
+			info.version.draft);
+		printf("Global Package name:   %s\n\n", info.name);
+	}
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&info, sizeof(info),
+				RTE_PMD_I40E_PKG_INFO_HEADER);
+	if (!ret) {
+		printf("i40e Profile Track id: 0x%x\n", info.track_id);
+		printf("i40e Profile Version:  %d.%d.%d.%d\n",
+			info.version.major,
+			info.version.minor,
+			info.version.update,
+			info.version.draft);
+		printf("i40e Profile name:     %s\n\n", info.name);
+	}
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&buff_size, sizeof(buff_size),
+				RTE_PMD_I40E_PKG_INFO_GLOBAL_NOTES_SIZE);
+	if (!ret && buff_size) {
+		buff = (uint8_t *)malloc(buff_size);
+		if (buff) {
+			ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+						buff, buff_size,
+						RTE_PMD_I40E_PKG_INFO_GLOBAL_NOTES);
+			if (!ret)
+				printf("Package Notes:\n%s\n\n", buff);
+			free(buff);
+		}
+	}
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+				(uint8_t *)&dev_num, sizeof(dev_num),
+				RTE_PMD_I40E_PKG_INFO_DEVID_NUM);
+	if (!ret && dev_num) {
+		buff_size = dev_num * sizeof(struct rte_pmd_i40e_ddp_device_id);
+		devs = (struct rte_pmd_i40e_ddp_device_id *)malloc(buff_size);
+		if (devs) {
+			ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+						(uint8_t *)devs, buff_size,
+						RTE_PMD_I40E_PKG_INFO_DEVID_LIST);
+			if (!ret) {
+				printf("List of supported devices:\n");
+				for (i = 0; i < dev_num; i++) {
+					printf("  %04X:%04X %04X:%04X\n",
+						devs[i].vendor_dev_id >> 16,
+						devs[i].vendor_dev_id & 0xFFFF,
+						devs[i].sub_vendor_dev_id >> 16,
+						devs[i].sub_vendor_dev_id & 0xFFFF);
+				}
+				printf("\n");
+			}
+			free(devs);
+		}
+	}
+
+	/* get information about protocols and packet types */
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+		(uint8_t *)&proto_num, sizeof(proto_num),
+		RTE_PMD_I40E_PKG_INFO_PROTOCOL_NUM);
+	if (ret || !proto_num)
+		goto no_print_return;
+
+	buff_size = proto_num * sizeof(struct rte_pmd_i40e_proto_info);
+	proto = (struct rte_pmd_i40e_proto_info *)malloc(buff_size);
+	if (!proto)
+		goto no_print_return;
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size, (uint8_t *)proto,
+					buff_size,
+					RTE_PMD_I40E_PKG_INFO_PROTOCOL_LIST);
+	if (!ret) {
+		printf("List of used protocols:\n");
+		for (i = 0; i < proto_num; i++)
+			printf("  %2u: %s\n", proto[i].proto_id,
+			       proto[i].name);
+		printf("\n");
+	}
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size,
+		(uint8_t *)&pctype_num, sizeof(pctype_num),
+		RTE_PMD_I40E_PKG_INFO_PCTYPE_NUM);
+	if (ret || !pctype_num)
+		goto no_print_pctypes;
+
+	buff_size = pctype_num * sizeof(struct rte_pmd_i40e_ptype_info);
+	pctype = (struct rte_pmd_i40e_ptype_info *)malloc(buff_size);
+	if (!pctype)
+		goto no_print_pctypes;
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size, (uint8_t *)pctype,
+					buff_size,
+					RTE_PMD_I40E_PKG_INFO_PCTYPE_LIST);
+	if (ret) {
+		free(pctype);
+		goto no_print_pctypes;
+	}
+
+	printf("List of defined packet classification types:\n");
+	for (i = 0; i < pctype_num; i++) {
+		printf("  %2u:", pctype[i].ptype_id);
+		for (j = 0; j < RTE_PMD_I40E_PROTO_NUM; j++) {
+			proto_id = pctype[i].protocols[j];
+			if (proto_id != RTE_PMD_I40E_PROTO_UNUSED) {
+				for (n = 0; n < proto_num; n++) {
+					if (proto[n].proto_id == proto_id) {
+						printf(" %s", proto[n].name);
+						break;
+					}
+				}
+			}
+		}
+		printf("\n");
+	}
+	printf("\n");
+	free(pctype);
+
+no_print_pctypes:
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size, (uint8_t *)&ptype_num,
+					sizeof(ptype_num),
+					RTE_PMD_I40E_PKG_INFO_PTYPE_NUM);
+	if (ret || !ptype_num)
+		goto no_print_return;
+
+	buff_size = ptype_num * sizeof(struct rte_pmd_i40e_ptype_info);
+	ptype = (struct rte_pmd_i40e_ptype_info *)malloc(buff_size);
+	if (!ptype)
+		goto no_print_return;
+
+	ret = rte_pmd_i40e_get_ddp_info(pkg, pkg_size, (uint8_t *)ptype,
+					buff_size,
+					RTE_PMD_I40E_PKG_INFO_PTYPE_LIST);
+	if (ret) {
+		free(ptype);
+		goto no_print_return;
+	}
+	printf("List of defined packet types:\n");
+	for (i = 0; i < ptype_num; i++) {
+		printf("  %2u:", ptype[i].ptype_id);
+		for (j = 0; j < RTE_PMD_I40E_PROTO_NUM; j++) {
+			proto_id = ptype[i].protocols[j];
+			if (proto_id != RTE_PMD_I40E_PROTO_UNUSED) {
+				for (n = 0; n < proto_num; n++) {
+					if (proto[n].proto_id == proto_id) {
+						printf(" %s", proto[n].name);
+						break;
+					}
+				}
+			}
+		}
+		printf("\n");
+	}
+	free(ptype);
+	printf("\n");
+
+	ret = 0;
+no_print_return:
+	if (proto)
+		free(proto);
+#endif
+	if (ret == -ENOTSUP)
+		printf("Function not supported in PMD driver\n");
+	close_ddp_package_file(pkg);
+}
+
+cmdline_parse_inst_t cmd_ddp_get_info = {
+	.f = cmd_ddp_info_parsed,
+	.data = NULL,
+	.help_str = "ddp get info <profile_path>",
+	.tokens = {
+		(void *)&cmd_ddp_info_ddp,
+		(void *)&cmd_ddp_info_get,
+		(void *)&cmd_ddp_info_info,
+		(void *)&cmd_ddp_info_filepath,
 		NULL,
 	},
 };
@@ -12982,7 +14572,7 @@ struct cmd_ddp_get_list_result {
 	cmdline_fixed_string_t ddp;
 	cmdline_fixed_string_t get;
 	cmdline_fixed_string_t list;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 cmdline_parse_token_string_t cmd_ddp_get_list_ddp =
@@ -12992,7 +14582,7 @@ cmdline_parse_token_string_t cmd_ddp_get_list_get =
 cmdline_parse_token_string_t cmd_ddp_get_list_list =
 	TOKEN_STRING_INITIALIZER(struct cmd_ddp_get_list_result, list, "list");
 cmdline_parse_token_num_t cmd_ddp_get_list_port_id =
-	TOKEN_NUM_INITIALIZER(struct cmd_ddp_get_list_result, port_id, UINT8);
+	TOKEN_NUM_INITIALIZER(struct cmd_ddp_get_list_result, port_id, UINT16);
 
 static void
 cmd_ddp_get_list_parsed(
@@ -13069,7 +14659,7 @@ struct cmd_show_vf_stats_result {
 	cmdline_fixed_string_t show;
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t stats;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 };
 
@@ -13089,7 +14679,7 @@ cmdline_parse_token_string_t cmd_show_vf_stats_stats =
 cmdline_parse_token_num_t cmd_show_vf_stats_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_show_vf_stats_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_show_vf_stats_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_show_vf_stats_result,
@@ -13178,7 +14768,7 @@ struct cmd_clear_vf_stats_result {
 	cmdline_fixed_string_t clear;
 	cmdline_fixed_string_t vf;
 	cmdline_fixed_string_t stats;
-	uint8_t port_id;
+	portid_t port_id;
 	uint16_t vf_id;
 };
 
@@ -13198,7 +14788,7 @@ cmdline_parse_token_string_t cmd_clear_vf_stats_stats =
 cmdline_parse_token_num_t cmd_clear_vf_stats_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_clear_vf_stats_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_clear_vf_stats_vf_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_clear_vf_stats_result,
@@ -13258,6 +14848,303 @@ cmdline_parse_inst_t cmd_clear_vf_stats = {
 	},
 };
 
+/* port config pctype mapping reset */
+
+/* Common result structure for port config pctype mapping reset */
+struct cmd_pctype_mapping_reset_result {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t config;
+	portid_t port_id;
+	cmdline_fixed_string_t pctype;
+	cmdline_fixed_string_t mapping;
+	cmdline_fixed_string_t reset;
+};
+
+/* Common CLI fields for port config pctype mapping reset*/
+cmdline_parse_token_string_t cmd_pctype_mapping_reset_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_reset_result,
+		 port, "port");
+cmdline_parse_token_string_t cmd_pctype_mapping_reset_config =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_reset_result,
+		 config, "config");
+cmdline_parse_token_num_t cmd_pctype_mapping_reset_port_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_pctype_mapping_reset_result,
+		 port_id, UINT16);
+cmdline_parse_token_string_t cmd_pctype_mapping_reset_pctype =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_reset_result,
+		 pctype, "pctype");
+cmdline_parse_token_string_t cmd_pctype_mapping_reset_mapping =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_reset_result,
+		 mapping, "mapping");
+cmdline_parse_token_string_t cmd_pctype_mapping_reset_reset =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_reset_result,
+		 reset, "reset");
+
+static void
+cmd_pctype_mapping_reset_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pctype_mapping_reset_result *res = parsed_result;
+	int ret = -ENOTSUP;
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	ret = rte_pmd_i40e_flow_type_mapping_reset(res->port_id);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENODEV:
+		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("function not implemented\n");
+		break;
+	default:
+		printf("programming error: (%s)\n", strerror(-ret));
+	}
+}
+
+cmdline_parse_inst_t cmd_pctype_mapping_reset = {
+	.f = cmd_pctype_mapping_reset_parsed,
+	.data = NULL,
+	.help_str = "port config <port_id> pctype mapping reset",
+	.tokens = {
+		(void *)&cmd_pctype_mapping_reset_port,
+		(void *)&cmd_pctype_mapping_reset_config,
+		(void *)&cmd_pctype_mapping_reset_port_id,
+		(void *)&cmd_pctype_mapping_reset_pctype,
+		(void *)&cmd_pctype_mapping_reset_mapping,
+		(void *)&cmd_pctype_mapping_reset_reset,
+		NULL,
+	},
+};
+
+/* show port pctype mapping */
+
+/* Common result structure for show port pctype mapping */
+struct cmd_pctype_mapping_get_result {
+	cmdline_fixed_string_t show;
+	cmdline_fixed_string_t port;
+	portid_t port_id;
+	cmdline_fixed_string_t pctype;
+	cmdline_fixed_string_t mapping;
+};
+
+/* Common CLI fields for pctype mapping get */
+cmdline_parse_token_string_t cmd_pctype_mapping_get_show =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_get_result,
+		 show, "show");
+cmdline_parse_token_string_t cmd_pctype_mapping_get_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_get_result,
+		 port, "port");
+cmdline_parse_token_num_t cmd_pctype_mapping_get_port_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_pctype_mapping_get_result,
+		 port_id, UINT16);
+cmdline_parse_token_string_t cmd_pctype_mapping_get_pctype =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_get_result,
+		 pctype, "pctype");
+cmdline_parse_token_string_t cmd_pctype_mapping_get_mapping =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_get_result,
+		 mapping, "mapping");
+
+static void
+cmd_pctype_mapping_get_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pctype_mapping_get_result *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_flow_type_mapping
+				mapping[RTE_PMD_I40E_FLOW_TYPE_MAX];
+	int i, j, first_pctype;
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	ret = rte_pmd_i40e_flow_type_mapping_get(res->port_id, mapping);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -ENODEV:
+		printf("invalid port_id %d\n", res->port_id);
+		return;
+	case -ENOTSUP:
+		printf("function not implemented\n");
+		return;
+	default:
+		printf("programming error: (%s)\n", strerror(-ret));
+		return;
+	}
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	for (i = 0; i < RTE_PMD_I40E_FLOW_TYPE_MAX; i++) {
+		if (mapping[i].pctype != 0ULL) {
+			first_pctype = 1;
+
+			printf("pctype: ");
+			for (j = 0; j < RTE_PMD_I40E_PCTYPE_MAX; j++) {
+				if (mapping[i].pctype & (1ULL << j)) {
+					printf(first_pctype ?
+					       "%02d" : ",%02d", j);
+					first_pctype = 0;
+				}
+			}
+			printf("  ->  flowtype: %02d\n", mapping[i].flow_type);
+		}
+	}
+#endif
+}
+
+cmdline_parse_inst_t cmd_pctype_mapping_get = {
+	.f = cmd_pctype_mapping_get_parsed,
+	.data = NULL,
+	.help_str = "show port <port_id> pctype mapping",
+	.tokens = {
+		(void *)&cmd_pctype_mapping_get_show,
+		(void *)&cmd_pctype_mapping_get_port,
+		(void *)&cmd_pctype_mapping_get_port_id,
+		(void *)&cmd_pctype_mapping_get_pctype,
+		(void *)&cmd_pctype_mapping_get_mapping,
+		NULL,
+	},
+};
+
+/* port config pctype mapping update */
+
+/* Common result structure for port config pctype mapping update */
+struct cmd_pctype_mapping_update_result {
+	cmdline_fixed_string_t port;
+	cmdline_fixed_string_t config;
+	portid_t port_id;
+	cmdline_fixed_string_t pctype;
+	cmdline_fixed_string_t mapping;
+	cmdline_fixed_string_t update;
+	cmdline_fixed_string_t pctype_list;
+	uint16_t flow_type;
+};
+
+/* Common CLI fields for pctype mapping update*/
+cmdline_parse_token_string_t cmd_pctype_mapping_update_port =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 port, "port");
+cmdline_parse_token_string_t cmd_pctype_mapping_update_config =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 config, "config");
+cmdline_parse_token_num_t cmd_pctype_mapping_update_port_id =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 port_id, UINT16);
+cmdline_parse_token_string_t cmd_pctype_mapping_update_pctype =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 pctype, "pctype");
+cmdline_parse_token_string_t cmd_pctype_mapping_update_mapping =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 mapping, "mapping");
+cmdline_parse_token_string_t cmd_pctype_mapping_update_update =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 update, "update");
+cmdline_parse_token_string_t cmd_pctype_mapping_update_pc_type =
+	TOKEN_STRING_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 pctype_list, NULL);
+cmdline_parse_token_num_t cmd_pctype_mapping_update_flow_type =
+	TOKEN_NUM_INITIALIZER
+		(struct cmd_pctype_mapping_update_result,
+		 flow_type, UINT16);
+
+static void
+cmd_pctype_mapping_update_parsed(
+	void *parsed_result,
+	__attribute__((unused)) struct cmdline *cl,
+	__attribute__((unused)) void *data)
+{
+	struct cmd_pctype_mapping_update_result *res = parsed_result;
+	int ret = -ENOTSUP;
+#ifdef RTE_LIBRTE_I40E_PMD
+	struct rte_pmd_i40e_flow_type_mapping mapping;
+	unsigned int i;
+	unsigned int nb_item;
+	unsigned int pctype_list[RTE_PMD_I40E_PCTYPE_MAX];
+#endif
+
+	if (port_id_is_invalid(res->port_id, ENABLED_WARN))
+		return;
+
+#ifdef RTE_LIBRTE_I40E_PMD
+	nb_item = parse_item_list(res->pctype_list, "pctypes",
+				  RTE_PMD_I40E_PCTYPE_MAX, pctype_list, 1);
+	mapping.flow_type = res->flow_type;
+	for (i = 0, mapping.pctype = 0ULL; i < nb_item; i++)
+		mapping.pctype |= (1ULL << pctype_list[i]);
+	ret = rte_pmd_i40e_flow_type_mapping_update(res->port_id,
+						&mapping,
+						1,
+						0);
+#endif
+
+	switch (ret) {
+	case 0:
+		break;
+	case -EINVAL:
+		printf("invalid pctype or flow type\n");
+		break;
+	case -ENODEV:
+		printf("invalid port_id %d\n", res->port_id);
+		break;
+	case -ENOTSUP:
+		printf("function not implemented\n");
+		break;
+	default:
+		printf("programming error: (%s)\n", strerror(-ret));
+	}
+}
+
+cmdline_parse_inst_t cmd_pctype_mapping_update = {
+	.f = cmd_pctype_mapping_update_parsed,
+	.data = NULL,
+	.help_str = "port config <port_id> pctype mapping update"
+	" <pctype_id_0,[pctype_id_1]*> <flowtype_id>",
+	.tokens = {
+		(void *)&cmd_pctype_mapping_update_port,
+		(void *)&cmd_pctype_mapping_update_config,
+		(void *)&cmd_pctype_mapping_update_port_id,
+		(void *)&cmd_pctype_mapping_update_pctype,
+		(void *)&cmd_pctype_mapping_update_mapping,
+		(void *)&cmd_pctype_mapping_update_update,
+		(void *)&cmd_pctype_mapping_update_pc_type,
+		(void *)&cmd_pctype_mapping_update_flow_type,
+		NULL,
+	},
+};
+
 /* ptype mapping get */
 
 /* Common result structure for ptype mapping get */
@@ -13265,7 +15152,7 @@ struct cmd_ptype_mapping_get_result {
 	cmdline_fixed_string_t ptype;
 	cmdline_fixed_string_t mapping;
 	cmdline_fixed_string_t get;
-	uint8_t port_id;
+	portid_t port_id;
 	uint8_t valid_only;
 };
 
@@ -13285,7 +15172,7 @@ cmdline_parse_token_string_t cmd_ptype_mapping_get_get =
 cmdline_parse_token_num_t cmd_ptype_mapping_get_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_get_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_ptype_mapping_get_valid_only =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_get_result,
@@ -13360,7 +15247,7 @@ struct cmd_ptype_mapping_replace_result {
 	cmdline_fixed_string_t ptype;
 	cmdline_fixed_string_t mapping;
 	cmdline_fixed_string_t replace;
-	uint8_t port_id;
+	portid_t port_id;
 	uint32_t target;
 	uint8_t mask;
 	uint32_t pkt_type;
@@ -13382,7 +15269,7 @@ cmdline_parse_token_string_t cmd_ptype_mapping_replace_replace =
 cmdline_parse_token_num_t cmd_ptype_mapping_replace_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_replace_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_ptype_mapping_replace_target =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_replace_result,
@@ -13457,7 +15344,7 @@ struct cmd_ptype_mapping_reset_result {
 	cmdline_fixed_string_t ptype;
 	cmdline_fixed_string_t mapping;
 	cmdline_fixed_string_t reset;
-	uint8_t port_id;
+	portid_t port_id;
 };
 
 /* Common CLI fields for ptype mapping reset*/
@@ -13476,7 +15363,7 @@ cmdline_parse_token_string_t cmd_ptype_mapping_reset_reset =
 cmdline_parse_token_num_t cmd_ptype_mapping_reset_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_reset_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 
 static void
 cmd_ptype_mapping_reset_parsed(
@@ -13528,7 +15415,7 @@ struct cmd_ptype_mapping_update_result {
 	cmdline_fixed_string_t ptype;
 	cmdline_fixed_string_t mapping;
 	cmdline_fixed_string_t reset;
-	uint8_t port_id;
+	portid_t port_id;
 	uint8_t hw_ptype;
 	uint32_t sw_ptype;
 };
@@ -13549,7 +15436,7 @@ cmdline_parse_token_string_t cmd_ptype_mapping_update_update =
 cmdline_parse_token_num_t cmd_ptype_mapping_update_port_id =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_update_result,
-		 port_id, UINT8);
+		 port_id, UINT16);
 cmdline_parse_token_num_t cmd_ptype_mapping_update_hw_ptype =
 	TOKEN_NUM_INITIALIZER
 		(struct cmd_ptype_mapping_update_result,
@@ -13694,6 +15581,8 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *) &cmd_set_bond_mac_addr,
 	(cmdline_parse_inst_t *) &cmd_set_balance_xmit_policy,
 	(cmdline_parse_inst_t *) &cmd_set_bond_mon_period,
+	(cmdline_parse_inst_t *) &cmd_set_lacp_dedicated_queues,
+	(cmdline_parse_inst_t *) &cmd_set_bonding_agg_mode_policy,
 #endif
 	(cmdline_parse_inst_t *)&cmd_vlan_offload,
 	(cmdline_parse_inst_t *)&cmd_vlan_tpid,
@@ -13710,6 +15599,12 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_tso_show,
 	(cmdline_parse_inst_t *)&cmd_tunnel_tso_set,
 	(cmdline_parse_inst_t *)&cmd_tunnel_tso_show,
+	(cmdline_parse_inst_t *)&cmd_gro_enable,
+	(cmdline_parse_inst_t *)&cmd_gro_flush,
+	(cmdline_parse_inst_t *)&cmd_gro_show,
+	(cmdline_parse_inst_t *)&cmd_gso_enable,
+	(cmdline_parse_inst_t *)&cmd_gso_size,
+	(cmdline_parse_inst_t *)&cmd_gso_show,
 	(cmdline_parse_inst_t *)&cmd_link_flow_control_set,
 	(cmdline_parse_inst_t *)&cmd_link_flow_control_set_rx,
 	(cmdline_parse_inst_t *)&cmd_link_flow_control_set_tx,
@@ -13731,6 +15626,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_stop,
 	(cmdline_parse_inst_t *)&cmd_mac_addr,
 	(cmdline_parse_inst_t *)&cmd_set_qmap,
+	(cmdline_parse_inst_t *)&cmd_set_xstats_hide_zero,
 	(cmdline_parse_inst_t *)&cmd_operate_port,
 	(cmdline_parse_inst_t *)&cmd_operate_specific_port,
 	(cmdline_parse_inst_t *)&cmd_operate_attach_port,
@@ -13789,6 +15685,15 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_hash_input_set,
 	(cmdline_parse_inst_t *)&cmd_set_fdir_input_set,
 	(cmdline_parse_inst_t *)&cmd_flow,
+	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_srtcm,
+	(cmdline_parse_inst_t *)&cmd_add_port_meter_profile_trtcm,
+	(cmdline_parse_inst_t *)&cmd_del_port_meter_profile,
+	(cmdline_parse_inst_t *)&cmd_set_port_meter,
+	(cmdline_parse_inst_t *)&cmd_del_port_meter,
+	(cmdline_parse_inst_t *)&cmd_set_port_meter_profile,
+	(cmdline_parse_inst_t *)&cmd_set_port_meter_policer_action,
+	(cmdline_parse_inst_t *)&cmd_set_port_meter_stats_mask,
+	(cmdline_parse_inst_t *)&cmd_show_port_meter_stats,
 	(cmdline_parse_inst_t *)&cmd_mcast_addr,
 	(cmdline_parse_inst_t *)&cmd_config_l2_tunnel_eth_type_all,
 	(cmdline_parse_inst_t *)&cmd_config_l2_tunnel_eth_type_specific,
@@ -13805,7 +15710,6 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_vf_vlan_stripq,
 	(cmdline_parse_inst_t *)&cmd_set_vf_vlan_insert,
 	(cmdline_parse_inst_t *)&cmd_set_tx_loopback,
-#ifdef RTE_LIBRTE_IXGBE_PMD
 	(cmdline_parse_inst_t *)&cmd_set_all_queues_drop_en,
 	(cmdline_parse_inst_t *)&cmd_set_vf_split_drop_en,
 	(cmdline_parse_inst_t *)&cmd_set_macsec_offload_on,
@@ -13813,7 +15717,6 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_macsec_sc,
 	(cmdline_parse_inst_t *)&cmd_set_macsec_sa,
 	(cmdline_parse_inst_t *)&cmd_set_vf_traffic,
-#endif
 	(cmdline_parse_inst_t *)&cmd_set_vf_rxmode,
 	(cmdline_parse_inst_t *)&cmd_vf_rate_limit,
 	(cmdline_parse_inst_t *)&cmd_vf_rxvlan_filter,
@@ -13827,14 +15730,45 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_vf_tc_max_bw,
 	(cmdline_parse_inst_t *)&cmd_strict_link_prio,
 	(cmdline_parse_inst_t *)&cmd_tc_min_bw,
+#if defined RTE_LIBRTE_PMD_SOFTNIC && defined RTE_LIBRTE_SCHED
+	(cmdline_parse_inst_t *)&cmd_set_port_tm_hierarchy_default,
+#endif
 	(cmdline_parse_inst_t *)&cmd_ddp_add,
+	(cmdline_parse_inst_t *)&cmd_ddp_del,
 	(cmdline_parse_inst_t *)&cmd_ddp_get_list,
+	(cmdline_parse_inst_t *)&cmd_ddp_get_info,
 	(cmdline_parse_inst_t *)&cmd_show_vf_stats,
 	(cmdline_parse_inst_t *)&cmd_clear_vf_stats,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_get,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_replace,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_reset,
 	(cmdline_parse_inst_t *)&cmd_ptype_mapping_update,
+
+	(cmdline_parse_inst_t *)&cmd_pctype_mapping_get,
+	(cmdline_parse_inst_t *)&cmd_pctype_mapping_reset,
+	(cmdline_parse_inst_t *)&cmd_pctype_mapping_update,
+	(cmdline_parse_inst_t *)&cmd_queue_region,
+	(cmdline_parse_inst_t *)&cmd_region_flowtype,
+	(cmdline_parse_inst_t *)&cmd_user_priority_region,
+	(cmdline_parse_inst_t *)&cmd_flush_queue_region,
+	(cmdline_parse_inst_t *)&cmd_show_queue_region_info_all,
+	(cmdline_parse_inst_t *)&cmd_show_port_tm_cap,
+	(cmdline_parse_inst_t *)&cmd_show_port_tm_level_cap,
+	(cmdline_parse_inst_t *)&cmd_show_port_tm_node_cap,
+	(cmdline_parse_inst_t *)&cmd_show_port_tm_node_type,
+	(cmdline_parse_inst_t *)&cmd_show_port_tm_node_stats,
+	(cmdline_parse_inst_t *)&cmd_add_port_tm_node_shaper_profile,
+	(cmdline_parse_inst_t *)&cmd_del_port_tm_node_shaper_profile,
+	(cmdline_parse_inst_t *)&cmd_add_port_tm_node_shared_shaper,
+	(cmdline_parse_inst_t *)&cmd_del_port_tm_node_shared_shaper,
+	(cmdline_parse_inst_t *)&cmd_add_port_tm_node_wred_profile,
+	(cmdline_parse_inst_t *)&cmd_del_port_tm_node_wred_profile,
+	(cmdline_parse_inst_t *)&cmd_set_port_tm_node_shaper_profile,
+	(cmdline_parse_inst_t *)&cmd_add_port_tm_nonleaf_node,
+	(cmdline_parse_inst_t *)&cmd_add_port_tm_leaf_node,
+	(cmdline_parse_inst_t *)&cmd_del_port_tm_node,
+	(cmdline_parse_inst_t *)&cmd_set_port_tm_node_parent,
+	(cmdline_parse_inst_t *)&cmd_port_tm_hierarchy_commit,
 	NULL,
 };
 

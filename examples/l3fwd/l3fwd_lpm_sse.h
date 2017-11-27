@@ -36,72 +36,6 @@
 
 #include "l3fwd_sse.h"
 
-static __rte_always_inline uint16_t
-lpm_get_dst_port(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
-		uint8_t portid)
-{
-	uint32_t next_hop;
-	struct ipv6_hdr *ipv6_hdr;
-	struct ipv4_hdr *ipv4_hdr;
-	struct ether_hdr *eth_hdr;
-
-	if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
-
-		eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-		ipv4_hdr = (struct ipv4_hdr *)(eth_hdr + 1);
-
-		return (uint16_t) (
-			(rte_lpm_lookup(qconf->ipv4_lookup_struct,
-					rte_be_to_cpu_32(ipv4_hdr->dst_addr),
-					&next_hop) == 0) ?
-						next_hop : portid);
-
-	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
-
-		eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-		ipv6_hdr = (struct ipv6_hdr *)(eth_hdr + 1);
-
-		return (uint16_t) ((rte_lpm6_lookup(qconf->ipv6_lookup_struct,
-				ipv6_hdr->dst_addr, &next_hop) == 0)
-				? next_hop : portid);
-
-	}
-
-	return portid;
-}
-
-/*
- * lpm_get_dst_port optimized routine for packets where dst_ipv4 is already
- * precalculated. If packet is ipv6 dst_addr is taken directly from packet
- * header and dst_ipv4 value is not used.
- */
-static __rte_always_inline uint16_t
-lpm_get_dst_port_with_ipv4(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
-	uint32_t dst_ipv4, uint8_t portid)
-{
-	uint32_t next_hop;
-	struct ipv6_hdr *ipv6_hdr;
-	struct ether_hdr *eth_hdr;
-
-	if (RTE_ETH_IS_IPV4_HDR(pkt->packet_type)) {
-		return (uint16_t) ((rte_lpm_lookup(qconf->ipv4_lookup_struct, dst_ipv4,
-			&next_hop) == 0) ? next_hop : portid);
-
-	} else if (RTE_ETH_IS_IPV6_HDR(pkt->packet_type)) {
-
-		eth_hdr = rte_pktmbuf_mtod(pkt, struct ether_hdr *);
-		ipv6_hdr = (struct ipv6_hdr *)(eth_hdr + 1);
-
-		return (uint16_t) ((rte_lpm6_lookup(qconf->ipv6_lookup_struct,
-				ipv6_hdr->dst_addr, &next_hop) == 0)
-				? next_hop : portid);
-
-	}
-
-	return portid;
-
-}
-
 /*
  * Read packet_type and destination IPV4 addresses from 4 mbufs.
  */
@@ -145,7 +79,7 @@ static inline void
 processx4_step2(const struct lcore_conf *qconf,
 		__m128i dip,
 		uint32_t ipv4_flag,
-		uint8_t portid,
+		uint16_t portid,
 		struct rte_mbuf *pkt[FWDSTEP],
 		uint16_t dprt[FWDSTEP])
 {
@@ -178,7 +112,7 @@ processx4_step2(const struct lcore_conf *qconf,
  */
 static inline void
 l3fwd_lpm_send_packets(int nb_rx, struct rte_mbuf **pkts_burst,
-			uint8_t portid, struct lcore_conf *qconf)
+			uint16_t portid, struct lcore_conf *qconf)
 {
 	int32_t j;
 	uint16_t dst_port[MAX_PKT_BURST];

@@ -36,9 +36,8 @@
 #include <rte_ethdev.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
-#include <rte_memzone.h>
 #include <rte_string_fns.h>
-#include <rte_vdev.h>
+#include <rte_bus_vdev.h>
 #include <rte_kvargs.h>
 #include <rte_errno.h>
 
@@ -190,7 +189,7 @@ eth_dev_info(struct rte_eth_dev *dev,
 	dev_info->min_rx_bufsize = 0;
 }
 
-static void
+static int
 eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
 	unsigned i;
@@ -214,6 +213,8 @@ eth_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	stats->ipackets = rx_total;
 	stats->opackets = tx_total;
 	stats->oerrors = tx_err_total;
+
+	return 0;
 }
 
 static void
@@ -280,6 +281,8 @@ do_eth_dev_ring_create(const char *name,
 	struct rte_eth_dev_data *data = NULL;
 	struct pmd_internals *internals = NULL;
 	struct rte_eth_dev *eth_dev = NULL;
+	void **rx_queues_local = NULL;
+	void **tx_queues_local = NULL;
 	unsigned i;
 
 	RTE_LOG(INFO, PMD, "Creating rings-backed ethdev on numa socket %u\n",
@@ -294,16 +297,16 @@ do_eth_dev_ring_create(const char *name,
 		goto error;
 	}
 
-	data->rx_queues = rte_zmalloc_socket(name,
+	rx_queues_local = rte_zmalloc_socket(name,
 			sizeof(void *) * nb_rx_queues, 0, numa_node);
-	if (data->rx_queues == NULL) {
+	if (rx_queues_local == NULL) {
 		rte_errno = ENOMEM;
 		goto error;
 	}
 
-	data->tx_queues = rte_zmalloc_socket(name,
+	tx_queues_local = rte_zmalloc_socket(name,
 			sizeof(void *) * nb_tx_queues, 0, numa_node);
-	if (data->tx_queues == NULL) {
+	if (tx_queues_local == NULL) {
 		rte_errno = ENOMEM;
 		goto error;
 	}
@@ -330,6 +333,10 @@ do_eth_dev_ring_create(const char *name,
 	/* NOTE: we'll replace the data element, of originally allocated eth_dev
 	 * so the rings are local per-process */
 
+	rte_memcpy(data, eth_dev->data, sizeof(*data));
+	data->rx_queues = rx_queues_local;
+	data->tx_queues = tx_queues_local;
+
 	internals->action = action;
 	internals->max_rx_queues = nb_rx_queues;
 	internals->max_tx_queues = nb_tx_queues;
@@ -343,8 +350,6 @@ do_eth_dev_ring_create(const char *name,
 	}
 
 	data->dev_private = internals;
-	data->port_id = eth_dev->data->port_id;
-	memmove(data->name, eth_dev->data->name, sizeof(data->name));
 	data->nb_rx_queues = (uint16_t)nb_rx_queues;
 	data->nb_tx_queues = (uint16_t)nb_tx_queues;
 	data->dev_link = pmd_link;
@@ -352,7 +357,6 @@ do_eth_dev_ring_create(const char *name,
 
 	eth_dev->data = data;
 	eth_dev->dev_ops = &ops;
-	data->dev_flags = RTE_ETH_DEV_DETACHABLE;
 	data->kdrv = RTE_KDRV_NONE;
 	data->numa_node = numa_node;
 
@@ -365,10 +369,8 @@ do_eth_dev_ring_create(const char *name,
 	return data->port_id;
 
 error:
-	if (data) {
-		rte_free(data->rx_queues);
-		rte_free(data->tx_queues);
-	}
+	rte_free(rx_queues_local);
+	rte_free(tx_queues_local);
 	rte_free(data);
 	rte_free(internals);
 
@@ -392,7 +394,7 @@ rte_eth_from_rings(const char *name, struct rte_ring *const rx_queues[],
 	};
 	char args_str[32] = { 0 };
 	char ring_name[32] = { 0 };
-	uint8_t port_id = RTE_MAX_ETHPORTS;
+	uint16_t port_id = RTE_MAX_ETHPORTS;
 	int ret;
 
 	/* do some parameter checking */
@@ -492,7 +494,8 @@ static int parse_kvlist (const char *key __rte_unused, const char *value, void *
 
 	node = strchr(name, ':');
 	if (!node) {
-		RTE_LOG(WARNING, PMD, "could not parse node value from %s", name);
+		RTE_LOG(WARNING, PMD, "could not parse node value from %s\n",
+			name);
 		goto out;
 	}
 
@@ -501,7 +504,8 @@ static int parse_kvlist (const char *key __rte_unused, const char *value, void *
 
 	action = strchr(node, ':');
 	if (!action) {
-		RTE_LOG(WARNING, PMD, "could not action value from %s", node);
+		RTE_LOG(WARNING, PMD, "could not parse action value from %s\n",
+			node);
 		goto out;
 	}
 

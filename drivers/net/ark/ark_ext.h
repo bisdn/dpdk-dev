@@ -91,7 +91,7 @@ int dev_set_link_up(struct rte_eth_dev *dev,
 int dev_set_link_down(struct rte_eth_dev *dev,
 		      void *user_data);
 
-void stats_get(struct rte_eth_dev *dev,
+int stats_get(struct rte_eth_dev *dev,
 	       struct rte_eth_stats *stats,
 	       void *user_data);
 
@@ -111,5 +111,9 @@ void mac_addr_remove(struct rte_eth_dev *dev,
 void mac_addr_set(struct rte_eth_dev *dev,
 		  struct ether_addr *mac_addr,
 		  void *user_data);
+
+int set_mtu(struct rte_eth_dev *dev,
+	    uint16_t size,
+	    void *user_data);
 
 #endif

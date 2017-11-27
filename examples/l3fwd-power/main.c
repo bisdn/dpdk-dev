@@ -50,9 +50,7 @@
 #include <rte_malloc.h>
 #include <rte_memory.h>
 #include <rte_memcpy.h>
-#include <rte_memzone.h>
 #include <rte_eal.h>
-#include <rte_per_lcore.h>
 #include <rte_launch.h>
 #include <rte_atomic.h>
 #include <rte_cycles.h>
@@ -61,7 +59,6 @@
 #include <rte_per_lcore.h>
 #include <rte_branch_prediction.h>
 #include <rte_interrupts.h>
-#include <rte_pci.h>
 #include <rte_random.h>
 #include <rte_debug.h>
 #include <rte_ether.h>
@@ -74,7 +71,6 @@
 #include <rte_string_fns.h>
 #include <rte_timer.h>
 #include <rte_power.h>
-#include <rte_eal.h>
 #include <rte_spinlock.h>
 
 #define RTE_LOGTYPE_L3FWD_POWER RTE_LOGTYPE_USER1
@@ -131,9 +127,9 @@
  */
 
 #define NB_MBUF RTE_MAX	( \
-	(nb_ports*nb_rx_queue*RTE_TEST_RX_DESC_DEFAULT + \
+	(nb_ports*nb_rx_queue*nb_rxd + \
 	nb_ports*nb_lcores*MAX_PKT_BURST + \
-	nb_ports*n_tx_queue*RTE_TEST_TX_DESC_DEFAULT + \
+	nb_ports*n_tx_queue*nb_txd + \
 	nb_lcores*MEMPOOL_CACHE_SIZE), \
 	(unsigned)8192)
 
@@ -176,7 +172,7 @@ enum freq_scale_hint_t
 };
 
 struct lcore_rx_queue {
-	uint8_t port_id;
+	uint16_t port_id;
 	uint8_t queue_id;
 	enum freq_scale_hint_t freq_up_hint;
 	uint32_t zero_rx_packet_count;
@@ -192,7 +188,7 @@ struct lcore_rx_queue {
 
 #define MAX_LCORE_PARAMS 1024
 struct lcore_params {
-	uint8_t port_id;
+	uint16_t port_id;
 	uint8_t queue_id;
 	uint8_t lcore_id;
 } __rte_cache_aligned;
@@ -245,7 +241,7 @@ static struct rte_mempool * pktmbuf_pool[NB_SOCKETS];
 
 #if (APP_LOOKUP_METHOD == APP_LOOKUP_EXACT_MATCH)
 
-#ifdef RTE_MACHINE_CPUFLAG_SSE4_2
+#ifdef RTE_ARCH_X86
 #include <rte_hash_crc.h>
 #define DEFAULT_HASH_FUNC       rte_hash_crc
 #else
@@ -310,8 +306,8 @@ static lookup_struct_t *ipv6_l3fwd_lookup_struct[NB_SOCKETS];
 #define IPV6_L3FWD_NUM_ROUTES \
 	(sizeof(ipv6_l3fwd_route_array) / sizeof(ipv6_l3fwd_route_array[0]))
 
-static uint8_t ipv4_l3fwd_out_if[L3FWD_HASH_ENTRIES] __rte_cache_aligned;
-static uint8_t ipv6_l3fwd_out_if[L3FWD_HASH_ENTRIES] __rte_cache_aligned;
+static uint16_t ipv4_l3fwd_out_if[L3FWD_HASH_ENTRIES] __rte_cache_aligned;
+static uint16_t ipv6_l3fwd_out_if[L3FWD_HASH_ENTRIES] __rte_cache_aligned;
 #endif
 
 #if (APP_LOOKUP_METHOD == APP_LOOKUP_LPM)
@@ -372,7 +368,7 @@ static struct rte_timer power_timers[RTE_MAX_LCORE];
 
 static inline uint32_t power_idle_heuristic(uint32_t zero_rx_packet_count);
 static inline enum freq_scale_hint_t power_freq_scaleup_heuristic( \
-			unsigned lcore_id, uint8_t port_id, uint16_t queue_id);
+		unsigned int lcore_id, uint16_t port_id, uint16_t queue_id);
 
 /* exit signal handler */
 static void
@@ -453,7 +449,7 @@ power_timer_cb(__attribute__((unused)) struct rte_timer *tim,
 
 /* Enqueue a single packet, and send burst if queue is filled */
 static inline int
-send_single_packet(struct rte_mbuf *m, uint8_t port)
+send_single_packet(struct rte_mbuf *m, uint16_t port)
 {
 	uint32_t lcore_id;
 	struct lcore_conf *qconf;
@@ -525,8 +521,8 @@ print_ipv6_key(struct ipv6_5tuple key)
 	        key.port_dst, key.port_src, key.proto);
 }
 
-static inline uint8_t
-get_ipv4_dst_port(struct ipv4_hdr *ipv4_hdr, uint8_t portid,
+static inline uint16_t
+get_ipv4_dst_port(struct ipv4_hdr *ipv4_hdr, uint16_t portid,
 		lookup_struct_t * ipv4_l3fwd_lookup_struct)
 {
 	struct ipv4_5tuple key;
@@ -561,11 +557,11 @@ get_ipv4_dst_port(struct ipv4_hdr *ipv4_hdr, uint8_t portid,
 
 	/* Find destination port */
 	ret = rte_hash_lookup(ipv4_l3fwd_lookup_struct, (const void *)&key);
-	return (uint8_t)((ret < 0)? portid : ipv4_l3fwd_out_if[ret]);
+	return ((ret < 0) ? portid : ipv4_l3fwd_out_if[ret]);
 }
 
-static inline uint8_t
-get_ipv6_dst_port(struct ipv6_hdr *ipv6_hdr,  uint8_t portid,
+static inline uint16_t
+get_ipv6_dst_port(struct ipv6_hdr *ipv6_hdr, uint16_t portid,
 			lookup_struct_t *ipv6_l3fwd_lookup_struct)
 {
 	struct ipv6_5tuple key;
@@ -601,18 +597,18 @@ get_ipv6_dst_port(struct ipv6_hdr *ipv6_hdr,  uint8_t portid,
 
 	/* Find destination port */
 	ret = rte_hash_lookup(ipv6_l3fwd_lookup_struct, (const void *)&key);
-	return (uint8_t)((ret < 0)? portid : ipv6_l3fwd_out_if[ret]);
+	return ((ret < 0) ? portid : ipv6_l3fwd_out_if[ret]);
 }
 #endif
 
 #if (APP_LOOKUP_METHOD == APP_LOOKUP_LPM)
-static inline uint8_t
-get_ipv4_dst_port(struct ipv4_hdr *ipv4_hdr, uint8_t portid,
+static inline uint16_t
+get_ipv4_dst_port(struct ipv4_hdr *ipv4_hdr, uint16_t portid,
 		lookup_struct_t *ipv4_l3fwd_lookup_struct)
 {
 	uint32_t next_hop;
 
-	return (uint8_t) ((rte_lpm_lookup(ipv4_l3fwd_lookup_struct,
+	return ((rte_lpm_lookup(ipv4_l3fwd_lookup_struct,
 			rte_be_to_cpu_32(ipv4_hdr->dst_addr), &next_hop) == 0)?
 			next_hop : portid);
 }
@@ -636,7 +632,7 @@ parse_ptype_one(struct rte_mbuf *m)
 }
 
 static uint16_t
-cb_parse_ptype(uint8_t port __rte_unused, uint16_t queue __rte_unused,
+cb_parse_ptype(uint16_t port __rte_unused, uint16_t queue __rte_unused,
 	       struct rte_mbuf *pkts[], uint16_t nb_pkts,
 	       uint16_t max_pkts __rte_unused,
 	       void *user_param __rte_unused)
@@ -650,7 +646,7 @@ cb_parse_ptype(uint8_t port __rte_unused, uint16_t queue __rte_unused,
 }
 
 static int
-add_cb_parse_ptype(uint8_t portid, uint16_t queueid)
+add_cb_parse_ptype(uint16_t portid, uint16_t queueid)
 {
 	printf("Port %d: softly parse packet type info\n", portid);
 	if (rte_eth_add_rx_callback(portid, queueid, cb_parse_ptype, NULL))
@@ -661,13 +657,13 @@ add_cb_parse_ptype(uint8_t portid, uint16_t queueid)
 }
 
 static inline void
-l3fwd_simple_forward(struct rte_mbuf *m, uint8_t portid,
+l3fwd_simple_forward(struct rte_mbuf *m, uint16_t portid,
 				struct lcore_conf *qconf)
 {
 	struct ether_hdr *eth_hdr;
 	struct ipv4_hdr *ipv4_hdr;
 	void *d_addr_bytes;
-	uint8_t dst_port;
+	uint16_t dst_port;
 
 	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
 
@@ -754,13 +750,11 @@ power_idle_heuristic(uint32_t zero_rx_packet_count)
 	*/
 	else
 		return SUSPEND_THRESHOLD;
-
-	return 0;
 }
 
 static inline enum freq_scale_hint_t
 power_freq_scaleup_heuristic(unsigned lcore_id,
-			     uint8_t port_id,
+			     uint16_t port_id,
 			     uint16_t queue_id)
 {
 /**
@@ -807,7 +801,8 @@ sleep_until_rx_interrupt(int num)
 {
 	struct rte_epoll_event event[num];
 	int n, i;
-	uint8_t port_id, queue_id;
+	uint16_t port_id;
+	uint8_t queue_id;
 	void *data;
 
 	RTE_LOG(INFO, L3FWD_POWER,
@@ -834,7 +829,8 @@ static void turn_on_intr(struct lcore_conf *qconf)
 {
 	int i;
 	struct lcore_rx_queue *rx_queue;
-	uint8_t port_id, queue_id;
+	uint8_t queue_id;
+	uint16_t port_id;
 
 	for (i = 0; i < qconf->n_rx_queue; ++i) {
 		rx_queue = &(qconf->rx_queue_list[i]);
@@ -850,7 +846,8 @@ static void turn_on_intr(struct lcore_conf *qconf)
 static int event_register(struct lcore_conf *qconf)
 {
 	struct lcore_rx_queue *rx_queue;
-	uint8_t portid, queueid;
+	uint8_t queueid;
+	uint16_t portid;
 	uint32_t data;
 	int ret;
 	int i;
@@ -881,7 +878,8 @@ main_loop(__attribute__((unused)) void *dummy)
 	uint64_t prev_tsc, diff_tsc, cur_tsc;
 	uint64_t prev_tsc_power = 0, cur_tsc_power, diff_tsc_power;
 	int i, j, nb_rx;
-	uint8_t portid, queueid;
+	uint8_t queueid;
+	uint16_t portid;
 	struct lcore_conf *qconf;
 	struct lcore_rx_queue *rx_queue;
 	enum freq_scale_hint_t lcore_scaleup_hint;
@@ -906,7 +904,7 @@ main_loop(__attribute__((unused)) void *dummy)
 	for (i = 0; i < qconf->n_rx_queue; i++) {
 		portid = qconf->rx_queue_list[i].port_id;
 		queueid = qconf->rx_queue_list[i].queue_id;
-		RTE_LOG(INFO, L3FWD_POWER, " -- lcoreid=%u portid=%hhu "
+		RTE_LOG(INFO, L3FWD_POWER, " -- lcoreid=%u portid=%u "
 			"rxqueueid=%hhu\n", lcore_id, portid, queueid);
 	}
 
@@ -1113,7 +1111,7 @@ check_port_config(const unsigned nb_ports)
 }
 
 static uint8_t
-get_port_n_rx_queues(const uint8_t port)
+get_port_n_rx_queues(const uint16_t port)
 {
 	int queue = -1;
 	uint16_t i;
@@ -1543,11 +1541,12 @@ init_mem(unsigned nb_mbuf)
 
 /* Check the link status of all ports in up to 9s, and print them finally */
 static void
-check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
+check_all_ports_link_status(uint16_t port_num, uint32_t port_mask)
 {
 #define CHECK_INTERVAL 100 /* 100ms */
 #define MAX_CHECK_TIME 90 /* 9s (90 * 100ms) in total */
-	uint8_t portid, count, all_ports_up, print_flag = 0;
+	uint8_t count, all_ports_up, print_flag = 0;
+	uint16_t portid;
 	struct rte_eth_link link;
 
 	printf("\nChecking link status");
@@ -1596,7 +1595,7 @@ check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 	}
 }
 
-static int check_ptype(uint8_t portid)
+static int check_ptype(uint16_t portid)
 {
 	int i, ret;
 	int ptype_l3_ipv4 = 0;
@@ -1647,13 +1646,14 @@ main(int argc, char **argv)
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_txconf *txconf;
 	int ret;
-	unsigned nb_ports;
+	uint16_t nb_ports;
 	uint16_t queueid;
 	unsigned lcore_id;
 	uint64_t hz;
 	uint32_t n_tx_queue, nb_lcores;
 	uint32_t dev_rxq_num, dev_txq_num;
-	uint8_t portid, nb_rx_queue, queue, socketid;
+	uint8_t nb_rx_queue, queue, socketid;
+	uint16_t portid;
 	uint16_t org_rxq_intr = port_conf.intr_conf.rxq;
 
 	/* catch SIGINT and restore cpufreq governor to ondemand */
@@ -1726,6 +1726,13 @@ main(int argc, char **argv)
 			rte_exit(EXIT_FAILURE, "Cannot configure device: "
 					"err=%d, port=%d\n", ret, portid);
 
+		ret = rte_eth_dev_adjust_nb_rx_tx_desc(portid, &nb_rxd,
+						       &nb_txd);
+		if (ret < 0)
+			rte_exit(EXIT_FAILURE,
+				 "Cannot adjust number of descriptors: err=%d, port=%d\n",
+				 ret, portid);
+
 		rte_eth_macaddr_get(portid, &ports_eth_addr[portid]);
 		print_ethaddr(" Address:", &ports_eth_addr[portid]);
 		printf(", ");
@@ -1746,7 +1753,7 @@ main(int argc, char **argv)
 				rte_eth_dev_socket_id(portid));
 			if (qconf->tx_buffer[portid] == NULL)
 				rte_exit(EXIT_FAILURE, "Can't allocate tx buffer for port %u\n",
-						(unsigned) portid);
+						 portid);
 
 			rte_eth_tx_buffer_init(qconf->tx_buffer[portid], MAX_PKT_BURST);
 		}
@@ -1866,7 +1873,7 @@ main(int argc, char **argv)
 		rte_spinlock_init(&(locks[portid]));
 	}
 
-	check_all_ports_link_status((uint8_t)nb_ports, enabled_port_mask);
+	check_all_ports_link_status(nb_ports, enabled_port_mask);
 
 	/* launch per-lcore init on every lcore */
 	rte_eal_mp_remote_launch(main_loop, NULL, CALL_MASTER);

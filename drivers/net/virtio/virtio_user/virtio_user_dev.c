@@ -41,7 +41,6 @@
 #include <sys/eventfd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "vhost.h"
 #include "virtio_user_dev.h"
@@ -271,6 +270,8 @@ virtio_user_fill_intr_handle(struct virtio_user_dev *dev)
 	eth_dev->intr_handle->nb_efd = dev->max_queue_pairs;
 	eth_dev->intr_handle->max_intr = dev->max_queue_pairs + 1;
 	eth_dev->intr_handle->type = RTE_INTR_HANDLE_VDEV;
+	/* For virtio vdev, no need to read counter for clean */
+	eth_dev->intr_handle->efd_counter_size = 0;
 	if (dev->vhostfd >= 0)
 		eth_dev->intr_handle->fd = dev->vhostfd;
 

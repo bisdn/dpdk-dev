@@ -52,6 +52,7 @@
 #include <rte_vhost.h>
 #include <rte_ip.h>
 #include <rte_tcp.h>
+#include <rte_pause.h>
 
 #include "main.h"
 
@@ -176,7 +177,7 @@ static struct rte_eth_conf vmdq_conf_default = {
 };
 
 static unsigned lcore_ids[RTE_MAX_LCORE];
-static uint8_t ports[RTE_MAX_ETHPORTS];
+static uint16_t ports[RTE_MAX_ETHPORTS];
 static unsigned num_ports = 0; /**< The number of ports specified in command line */
 static uint16_t num_pf_queues, num_vmdq_queues;
 static uint16_t vmdq_pool_base, vmdq_queue_base;
@@ -264,7 +265,7 @@ validate_num_devices(uint32_t max_nb_devices)
  * coming from the mbuf_pool passed as parameter
  */
 static inline int
-port_init(uint8_t port)
+port_init(uint16_t port)
 {
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_conf port_conf;
@@ -338,6 +339,19 @@ port_init(uint8_t port)
 		return retval;
 	}
 
+	retval = rte_eth_dev_adjust_nb_rx_tx_desc(port, &rx_ring_size,
+		&tx_ring_size);
+	if (retval != 0) {
+		RTE_LOG(ERR, VHOST_PORT, "Failed to adjust number of descriptors "
+			"for port %u: %s.\n", port, strerror(-retval));
+		return retval;
+	}
+	if (rx_ring_size > RTE_TEST_RX_DESC_DEFAULT) {
+		RTE_LOG(ERR, VHOST_PORT, "Mbuf pool has an insufficient size "
+			"for Rx queues on port %u.\n", port);
+		return -1;
+	}
+
 	/* Setup the queues. */
 	for (q = 0; q < rx_rings; q ++) {
 		retval = rte_eth_rx_queue_setup(port, q, rx_ring_size,
@@ -378,7 +392,7 @@ port_init(uint8_t port)
 	RTE_LOG(INFO, VHOST_PORT, "Max virtio devices supported: %u\n", num_devices);
 	RTE_LOG(INFO, VHOST_PORT, "Port %u MAC: %02"PRIx8" %02"PRIx8" %02"PRIx8
 			" %02"PRIx8" %02"PRIx8" %02"PRIx8"\n",
-			(unsigned)port,
+			port,
 			vmdq_ports_eth_addr[port].addr_bytes[0],
 			vmdq_ports_eth_addr[port].addr_bytes[1],
 			vmdq_ports_eth_addr[port].addr_bytes[2],
@@ -653,7 +667,7 @@ us_vhost_parse_args(int argc, char **argv)
 
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++) {
 		if (enabled_port_mask & (1 << i))
-			ports[num_ports++] = (uint8_t)i;
+			ports[num_ports++] = i;
 	}
 
 	if ((num_ports ==  0) || (num_ports > MAX_SUP_PORTS)) {
@@ -1429,7 +1443,7 @@ main(int argc, char *argv[])
 	unsigned lcore_id, core_id = 0;
 	unsigned nb_ports, valid_num_ports;
 	int ret, i;
-	uint8_t portid;
+	uint16_t portid;
 	static pthread_t tid;
 	char thread_name[RTE_MAX_THREAD_NAME_LEN];
 	uint64_t flags = 0;

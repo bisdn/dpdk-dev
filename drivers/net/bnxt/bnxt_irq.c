@@ -50,11 +50,18 @@ static void bnxt_int_handler(void *param)
 	struct rte_eth_dev *eth_dev = (struct rte_eth_dev *)param;
 	struct bnxt *bp = (struct bnxt *)eth_dev->data->dev_private;
 	struct bnxt_cp_ring_info *cpr = bp->def_cp_ring;
-	uint32_t raw_cons = cpr->cp_raw_cons;
-	uint32_t cons;
 	struct cmpl_base *cmp;
+	uint32_t raw_cons;
+	uint32_t cons;
 
+	if (cpr == NULL)
+		return;
+
+	raw_cons = cpr->cp_raw_cons;
 	while (1) {
+		if (!cpr || !cpr->cp_ring_struct)
+			return;
+
 		cons = RING_CMP(cpr->cp_ring_struct, raw_cons);
 		cmp = &cpr->cp_desc_ring[cons];
 
@@ -137,7 +144,7 @@ int bnxt_setup_int(struct bnxt *bp)
 		for (i = 0; i < total_vecs; i++) {
 			bp->irq_tbl[i].vector = i;
 			snprintf(bp->irq_tbl[i].name, len,
-				 "%s-%d", bp->eth_dev->data->name, i);
+				 "%s-%d", bp->eth_dev->device->name, i);
 			bp->irq_tbl[i].handler = bnxt_int_handler;
 		}
 	} else {

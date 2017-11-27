@@ -48,17 +48,16 @@
 #include <rte_log.h>
 #include <rte_debug.h>
 #include <rte_pci.h>
+#include <rte_bus_pci.h>
 #include <rte_atomic.h>
 #include <rte_branch_prediction.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_tailq.h>
 #include <rte_eal.h>
 #include <rte_alarm.h>
 #include <rte_ether.h>
 #include <rte_ethdev.h>
 #include <rte_ethdev_pci.h>
-#include <rte_atomic.h>
 #include <rte_malloc.h>
 #include <rte_random.h>
 #include <rte_dev.h>
@@ -175,7 +174,7 @@ static void cxgbe_dev_info_get(struct rte_eth_dev *eth_dev,
 
 	device_info->rx_desc_lim = cxgbe_desc_lim;
 	device_info->tx_desc_lim = cxgbe_desc_lim;
-	device_info->speed_capa = ETH_LINK_SPEED_10G | ETH_LINK_SPEED_40G;
+	cxgbe_get_speed_caps(pi, &device_info->speed_capa);
 }
 
 static void cxgbe_dev_promiscuous_enable(struct rte_eth_dev *eth_dev)
@@ -648,7 +647,7 @@ static void cxgbe_dev_rx_queue_release(void *q)
 /*
  * Get port statistics.
  */
-static void cxgbe_dev_stats_get(struct rte_eth_dev *eth_dev,
+static int cxgbe_dev_stats_get(struct rte_eth_dev *eth_dev,
 				struct rte_eth_stats *eth_stats)
 {
 	struct port_info *pi = (struct port_info *)(eth_dev->data->dev_private);
@@ -691,6 +690,7 @@ static void cxgbe_dev_stats_get(struct rte_eth_dev *eth_dev,
 		eth_stats->q_obytes[i] = txq->stats.tx_bytes;
 		eth_stats->q_errors[i] = txq->stats.mapping_err;
 	}
+	return 0;
 }
 
 /*

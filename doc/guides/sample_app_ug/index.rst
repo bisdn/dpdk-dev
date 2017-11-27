@@ -36,12 +36,15 @@ Sample Applications User Guides
     :numbered:
 
     intro
+    compiling
     cmd_line
     ethtool
     exception_path
     hello_world
     skeleton
     rxtx_callbacks
+    flow_classify
+    flow_filtering
     ip_frag
     ipv4_multicast
     ip_reassembly
@@ -58,6 +61,7 @@ Sample Applications User Guides
     link_status_intr
     load_balancer
     server_node_efd
+    service_cores
     multi_process
     qos_metering
     qos_scheduler
@@ -66,9 +70,11 @@ Sample Applications User Guides
     packet_ordering
     vmdq_dcb_forwarding
     vhost
+    vhost_scsi
     netmap_compatibility
     ip_pipeline
     test_pipeline
+    eventdev_pipeline_sw_pmd
     dist_app
     vm_power_management
     tep_termination

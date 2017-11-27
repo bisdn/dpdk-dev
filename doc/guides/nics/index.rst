@@ -36,12 +36,14 @@ Network Interface Controller Drivers
     :numbered:
 
     overview
+    features
     build_and_test
     ark
     avp
     bnx2x
     bnxt
     cxgbe
+    dpaa
     dpaa2
     e1000em
     ena
@@ -54,7 +56,9 @@ Network Interface Controller Drivers
     liquidio
     mlx4
     mlx5
+    mrvl
     nfp
+    octeontx
     qede
     sfc_efx
     szedata2
@@ -64,6 +68,7 @@ Network Interface Controller Drivers
     vhost
     vmxnet3
     pcap_ring
+    fail_safe
 
 **Figures**
 

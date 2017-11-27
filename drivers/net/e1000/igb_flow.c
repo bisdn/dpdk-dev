@@ -47,7 +47,6 @@
 #include <rte_ethdev.h>
 #include <rte_ethdev_pci.h>
 #include <rte_memory.h>
-#include <rte_memzone.h>
 #include <rte_eal.h>
 #include <rte_atomic.h>
 #include <rte_malloc.h>
@@ -76,6 +75,8 @@
 		act = (actions) + (index);			\
 		}						\
 	} while (0)
+
+#define	IGB_FLEX_RAW_NUM	12
 
 /**
  * Please aware there's an asumption for all the parsers.
@@ -692,7 +693,8 @@ igb_parse_ethertype_filter(struct rte_eth_dev *dev,
 
 	if (hw->mac.type == e1000_82576) {
 		if (filter->queue >= IGB_MAX_RX_QUEUE_NUM_82576) {
-			memset(filter, 0, sizeof(struct rte_eth_ntuple_filter));
+			memset(filter, 0, sizeof(
+					struct rte_eth_ethertype_filter));
 			rte_flow_error_set(error, EINVAL,
 				RTE_FLOW_ERROR_TYPE_ITEM,
 				NULL, "queue number not supported "
@@ -701,7 +703,8 @@ igb_parse_ethertype_filter(struct rte_eth_dev *dev,
 		}
 	} else {
 		if (filter->queue >= IGB_MAX_RX_QUEUE_NUM) {
-			memset(filter, 0, sizeof(struct rte_eth_ntuple_filter));
+			memset(filter, 0, sizeof(
+					struct rte_eth_ethertype_filter));
 			rte_flow_error_set(error, EINVAL,
 				RTE_FLOW_ERROR_TYPE_ITEM,
 				NULL, "queue number not supported "
@@ -1043,8 +1046,11 @@ cons_parse_flex_filter(const struct rte_flow_attr *attr,
 	const struct rte_flow_item_raw *raw_spec;
 	const struct rte_flow_item_raw *raw_mask;
 	const struct rte_flow_action_queue *act_q;
-	uint32_t index, i, offset, total_offset = 0;
-	int32_t shift;
+	uint32_t index, i, offset, total_offset;
+	uint32_t max_offset = 0;
+	int32_t shift, j, raw_index = 0;
+	int32_t relative[IGB_FLEX_RAW_NUM] = {0};
+	int32_t	raw_offset[IGB_FLEX_RAW_NUM] = {0};
 
 	if (!pattern) {
 		rte_flow_error_set(error, EINVAL,
@@ -1105,14 +1111,29 @@ item_loop:
 	else
 		offset = 0;
 
-	for (index = 0; index < raw_spec->length; index++) {
-		if (raw_mask->pattern[index] != 0xFF) {
+	for (j = 0; j < raw_spec->length; j++) {
+		if (raw_mask->pattern[j] != 0xFF) {
 			memset(filter, 0, sizeof(struct rte_eth_flex_filter));
 			rte_flow_error_set(error, EINVAL,
 					RTE_FLOW_ERROR_TYPE_ITEM,
 					item, "Not supported by flex filter");
 			return -rte_errno;
 		}
+	}
+
+	total_offset = 0;
+
+	if (raw_spec->relative) {
+		for (j = raw_index; j > 0; j--) {
+			total_offset += raw_offset[j - 1];
+			if (!relative[j - 1])
+				break;
+		}
+		if (total_offset + raw_spec->length + offset > max_offset)
+			max_offset = total_offset + raw_spec->length + offset;
+	} else {
+		if (raw_spec->length + offset > max_offset)
+			max_offset = raw_spec->length + offset;
 	}
 
 	if ((raw_spec->length + offset + total_offset) >
@@ -1125,30 +1146,35 @@ item_loop:
 	}
 
 	if (raw_spec->relative == 0) {
-		for (index = 0; index < raw_spec->length; index++)
-			filter->bytes[index] = raw_spec->pattern[index];
-		index = offset / CHAR_BIT;
+		for (j = 0; j < raw_spec->length; j++)
+			filter->bytes[offset + j] =
+			raw_spec->pattern[j];
+		j = offset / CHAR_BIT;
+		shift = offset % CHAR_BIT;
 	} else {
-		for (index = 0; index < raw_spec->length; index++)
-			filter->bytes[total_offset + index] =
-				raw_spec->pattern[index];
-		index = (total_offset + offset) / CHAR_BIT;
+		for (j = 0; j < raw_spec->length; j++)
+			filter->bytes[total_offset + offset + j] =
+				raw_spec->pattern[j];
+		j = (total_offset + offset) / CHAR_BIT;
+		shift = (total_offset + offset) % CHAR_BIT;
 	}
 
 	i = 0;
 
-	for (shift = offset % CHAR_BIT; shift < CHAR_BIT; shift++) {
-		filter->mask[index] |= (0x80 >> shift);
+	for ( ; shift < CHAR_BIT; shift++) {
+		filter->mask[j] |= (0x80 >> shift);
 		i++;
 		if (i == raw_spec->length)
 			break;
 		if (shift == (CHAR_BIT - 1)) {
-			index++;
+			j++;
 			shift = -1;
 		}
 	}
 
-	total_offset += offset + raw_spec->length;
+	relative[raw_index] = raw_spec->relative;
+	raw_offset[raw_index] = offset + raw_spec->length;
+	raw_index++;
 
 	/* check if the next not void item is RAW */
 	index++;
@@ -1167,7 +1193,7 @@ item_loop:
 		goto item_loop;
 	}
 
-	filter->len = RTE_ALIGN(total_offset, 8);
+	filter->len = RTE_ALIGN(max_offset, 8);
 
 	/* parse action */
 	index = 0;
@@ -1319,7 +1345,7 @@ igb_flow_create(struct rte_eth_dev *dev,
 		if (!ret) {
 			ntuple_filter_ptr = rte_zmalloc("igb_ntuple_filter",
 				sizeof(struct igb_ntuple_filter_ele), 0);
-			(void)rte_memcpy(&ntuple_filter_ptr->filter_info,
+			rte_memcpy(&ntuple_filter_ptr->filter_info,
 				&ntuple_filter,
 				sizeof(struct rte_eth_ntuple_filter));
 			TAILQ_INSERT_TAIL(&igb_filter_ntuple_list,
@@ -1341,7 +1367,7 @@ igb_flow_create(struct rte_eth_dev *dev,
 			ethertype_filter_ptr = rte_zmalloc(
 				"igb_ethertype_filter",
 				sizeof(struct igb_ethertype_filter_ele), 0);
-			(void)rte_memcpy(&ethertype_filter_ptr->filter_info,
+			rte_memcpy(&ethertype_filter_ptr->filter_info,
 				&ethertype_filter,
 				sizeof(struct rte_eth_ethertype_filter));
 			TAILQ_INSERT_TAIL(&igb_filter_ethertype_list,
@@ -1361,7 +1387,7 @@ igb_flow_create(struct rte_eth_dev *dev,
 		if (!ret) {
 			syn_filter_ptr = rte_zmalloc("igb_syn_filter",
 				sizeof(struct igb_eth_syn_filter_ele), 0);
-			(void)rte_memcpy(&syn_filter_ptr->filter_info,
+			rte_memcpy(&syn_filter_ptr->filter_info,
 				&syn_filter,
 				sizeof(struct rte_eth_syn_filter));
 			TAILQ_INSERT_TAIL(&igb_filter_syn_list,
@@ -1382,7 +1408,7 @@ igb_flow_create(struct rte_eth_dev *dev,
 		if (!ret) {
 			flex_filter_ptr = rte_zmalloc("igb_flex_filter",
 				sizeof(struct igb_flex_filter_ele), 0);
-			(void)rte_memcpy(&flex_filter_ptr->filter_info,
+			rte_memcpy(&flex_filter_ptr->filter_info,
 				&flex_filter,
 				sizeof(struct rte_eth_flex_filter));
 			TAILQ_INSERT_TAIL(&igb_filter_flex_list,

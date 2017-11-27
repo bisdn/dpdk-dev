@@ -73,9 +73,11 @@ static struct rte_eth_fc_conf fc_conf = {
 };
 
 
-void configure_eth_port(uint8_t port_id)
+void configure_eth_port(uint16_t port_id)
 {
 	int ret;
+	uint16_t nb_rxd = RX_DESC_PER_QUEUE;
+	uint16_t nb_txd = TX_DESC_PER_QUEUE;
 
 	rte_eth_dev_stop(port_id);
 
@@ -84,8 +86,14 @@ void configure_eth_port(uint8_t port_id)
 		rte_exit(EXIT_FAILURE, "Cannot configure port %u (error %d)\n",
 				(unsigned int) port_id, ret);
 
+	ret = rte_eth_dev_adjust_nb_rx_tx_desc(port_id, &nb_rxd, &nb_txd);
+	if (ret < 0)
+		rte_exit(EXIT_FAILURE,
+				"Cannot adjust number of descriptors for port %u (error %d)\n",
+				(unsigned int) port_id, ret);
+
 	/* Initialize the port's RX queue */
-	ret = rte_eth_rx_queue_setup(port_id, 0, RX_DESC_PER_QUEUE,
+	ret = rte_eth_rx_queue_setup(port_id, 0, nb_rxd,
 			rte_eth_dev_socket_id(port_id),
 			NULL,
 			mbuf_pool);
@@ -95,7 +103,7 @@ void configure_eth_port(uint8_t port_id)
 				(unsigned int) port_id, ret);
 
 	/* Initialize the port's TX queue */
-	ret = rte_eth_tx_queue_setup(port_id, 0, TX_DESC_PER_QUEUE,
+	ret = rte_eth_tx_queue_setup(port_id, 0, nb_txd,
 			rte_eth_dev_socket_id(port_id),
 			NULL);
 	if (ret < 0)
@@ -127,7 +135,7 @@ init_dpdk(void)
 		rte_exit(EXIT_FAILURE, "Not enough ethernet port available\n");
 }
 
-void init_ring(int lcore_id, uint8_t port_id)
+void init_ring(int lcore_id, uint16_t port_id)
 {
 	struct rte_ring *ring;
 	char ring_name[RTE_RING_NAMESIZE];
@@ -148,12 +156,12 @@ void init_ring(int lcore_id, uint8_t port_id)
 void
 pair_ports(void)
 {
-	uint8_t i, j;
+	uint16_t i, j;
 
 	/* Pair ports with their "closest neighbour" in the portmask */
 	for (i = 0; i < RTE_MAX_ETHPORTS; i++)
 		if (is_bit_set(i, portmask))
-			for (j = (uint8_t) (i + 1); j < RTE_MAX_ETHPORTS; j++)
+			for (j = i + 1; j < RTE_MAX_ETHPORTS; j++)
 				if (is_bit_set(j, portmask)) {
 					port_pairs[i] = j;
 					port_pairs[j] = i;

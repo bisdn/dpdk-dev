@@ -34,14 +34,16 @@ include $(RTE_SDK)/mk/rte.vars.mk
 LIB = librte_cryptodev.a
 
 # library version
-LIBABIVER := 2
+LIBABIVER := 4
 
 # build flags
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
+LDLIBS += -lrte_eal -lrte_mempool -lrte_ring -lrte_mbuf
+LDLIBS += -lrte_kvargs
 
 # library source files
-SRCS-y += rte_cryptodev.c
+SRCS-y += rte_cryptodev.c rte_cryptodev_pmd.c
 
 # export include files
 SYMLINK-y-include += rte_crypto.h

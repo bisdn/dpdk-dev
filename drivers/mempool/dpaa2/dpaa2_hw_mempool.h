@@ -2,7 +2,7 @@
  *   BSD LICENSE
  *
  *   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright (c) 2016 NXP. All rights reserved.
+ *   Copyright 2016 NXP.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -39,7 +39,7 @@
 struct buf_pool_cfg {
 	void *addr;
 	/**< The address from where DPAA2 will carve out the buffers */
-	phys_addr_t    phys_addr;
+	rte_iova_t phys_addr;
 	/**< Physical address of the memory provided in addr */
 	uint32_t num;
 	/**< Number of buffers */

@@ -34,6 +34,7 @@
 #ifndef _E1000_ETHDEV_H_
 #define _E1000_ETHDEV_H_
 #include <rte_time.h>
+#include <rte_pci.h>
 
 #define E1000_INTEL_VENDOR_ID 0x8086
 
@@ -82,7 +83,7 @@
 #define E1000_MAX_FLEX_FILTER_DWDS \
 	(E1000_MAX_FLEX_FILTER_LEN / sizeof(uint32_t))
 #define E1000_FLEX_FILTERS_MASK_SIZE \
-	(E1000_MAX_FLEX_FILTER_DWDS / 4)
+	(E1000_MAX_FLEX_FILTER_DWDS / 2)
 #define E1000_FHFT_QUEUEING_LEN          0x0000007F
 #define E1000_FHFT_QUEUEING_QUEUE        0x00000700
 #define E1000_FHFT_QUEUEING_PRIO         0x00070000

@@ -169,6 +169,12 @@ enum index {
 	ITEM_MPLS_LABEL,
 	ITEM_GRE,
 	ITEM_GRE_PROTO,
+	ITEM_FUZZY,
+	ITEM_FUZZY_THRESH,
+	ITEM_GTP,
+	ITEM_GTP_TEID,
+	ITEM_GTPC,
+	ITEM_GTPU,
 
 	/* Validate/create actions. */
 	ACTIONS,
@@ -192,6 +198,8 @@ enum index {
 	ACTION_VF,
 	ACTION_VF_ORIGINAL,
 	ACTION_VF_ID,
+	ACTION_METER,
+	ACTION_METER_ID,
 };
 
 /** Size of pattern[] field in struct rte_flow_item_raw. */
@@ -222,10 +230,9 @@ struct context {
 	enum index prev; /**< Index of the last token seen. */
 	int next_num; /**< Number of entries in next[]. */
 	int args_num; /**< Number of entries in args[]. */
-	uint32_t reparse:1; /**< Start over from the beginning. */
 	uint32_t eol:1; /**< EOL has been detected. */
 	uint32_t last:1; /**< No more arguments. */
-	uint16_t port; /**< Current port ID (for completions). */
+	portid_t port; /**< Current port ID (for completions). */
 	uint32_t objdata; /**< Object-specific data. */
 	void *object; /**< Address of current object for relative offsets. */
 	void *objmask; /**< Object a full mask must be written to. */
@@ -345,7 +352,7 @@ struct token {
 /** Parser output buffer layout expected by cmd_flow_parsed(). */
 struct buffer {
 	enum index command; /**< Flow command. */
-	uint16_t port; /**< Affected port ID. */
+	portid_t port; /**< Affected port ID. */
 	union {
 		struct {
 			struct rte_flow_attr attr;
@@ -449,6 +456,16 @@ static const enum index next_item[] = {
 	ITEM_NVGRE,
 	ITEM_MPLS,
 	ITEM_GRE,
+	ITEM_FUZZY,
+	ITEM_GTP,
+	ITEM_GTPC,
+	ITEM_GTPU,
+	ZERO,
+};
+
+static const enum index item_fuzzy[] = {
+	ITEM_FUZZY_THRESH,
+	ITEM_NEXT,
 	ZERO,
 };
 
@@ -580,6 +597,12 @@ static const enum index item_gre[] = {
 	ZERO,
 };
 
+static const enum index item_gtp[] = {
+	ITEM_GTP_TEID,
+	ITEM_NEXT,
+	ZERO,
+};
+
 static const enum index next_action[] = {
 	ACTION_END,
 	ACTION_VOID,
@@ -593,6 +616,7 @@ static const enum index next_action[] = {
 	ACTION_RSS,
 	ACTION_PF,
 	ACTION_VF,
+	ACTION_METER,
 	ZERO,
 };
 
@@ -623,6 +647,12 @@ static const enum index action_rss[] = {
 static const enum index action_vf[] = {
 	ACTION_VF_ORIGINAL,
 	ACTION_VF_ID,
+	ACTION_NEXT,
+	ZERO,
+};
+
+static const enum index action_meter[] = {
+	ACTION_METER_ID,
 	ACTION_NEXT,
 	ZERO,
 };
@@ -1398,6 +1428,49 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY_HTON(struct rte_flow_item_gre,
 					     protocol)),
 	},
+	[ITEM_FUZZY] = {
+		.name = "fuzzy",
+		.help = "fuzzy pattern match, expect faster than default",
+		.priv = PRIV_ITEM(FUZZY,
+				sizeof(struct rte_flow_item_fuzzy)),
+		.next = NEXT(item_fuzzy),
+		.call = parse_vc,
+	},
+	[ITEM_FUZZY_THRESH] = {
+		.name = "thresh",
+		.help = "match accuracy threshold",
+		.next = NEXT(item_fuzzy, NEXT_ENTRY(UNSIGNED), item_param),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_fuzzy,
+					thresh)),
+	},
+	[ITEM_GTP] = {
+		.name = "gtp",
+		.help = "match GTP header",
+		.priv = PRIV_ITEM(GTP, sizeof(struct rte_flow_item_gtp)),
+		.next = NEXT(item_gtp),
+		.call = parse_vc,
+	},
+	[ITEM_GTP_TEID] = {
+		.name = "teid",
+		.help = "tunnel endpoint identifier",
+		.next = NEXT(item_gtp, NEXT_ENTRY(UNSIGNED), item_param),
+		.args = ARGS(ARGS_ENTRY_HTON(struct rte_flow_item_gtp, teid)),
+	},
+	[ITEM_GTPC] = {
+		.name = "gtpc",
+		.help = "match GTP header",
+		.priv = PRIV_ITEM(GTPC, sizeof(struct rte_flow_item_gtp)),
+		.next = NEXT(item_gtp),
+		.call = parse_vc,
+	},
+	[ITEM_GTPU] = {
+		.name = "gtpu",
+		.help = "match GTP header",
+		.priv = PRIV_ITEM(GTPU, sizeof(struct rte_flow_item_gtp)),
+		.next = NEXT(item_gtp),
+		.call = parse_vc,
+	},
+
 	/* Validate/create actions. */
 	[ACTIONS] = {
 		.name = "actions",
@@ -1542,6 +1615,21 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_vf, id)),
 		.call = parse_vc_conf,
 	},
+	[ACTION_METER] = {
+		.name = "meter",
+		.help = "meter the directed packets at given id",
+		.priv = PRIV_ACTION(METER,
+				    sizeof(struct rte_flow_action_meter)),
+		.next = NEXT(action_meter),
+		.call = parse_vc,
+	},
+	[ACTION_METER_ID] = {
+		.name = "mtr_id",
+		.help = "meter id to use",
+		.next = NEXT(action_meter, NEXT_ENTRY(UNSIGNED)),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_meter, mtr_id)),
+		.call = parse_vc_conf,
+	},
 };
 
 /** Remove and return last entry from argument stack. */
@@ -1598,6 +1686,19 @@ arg_entry_bf_fill(void *dst, uintmax_t val, const struct arg *arg)
 		i += add;
 	}
 	return len;
+}
+
+/** Compare a string with a partial one of a given length. */
+static int
+strcmp_partial(const char *full, const char *partial, size_t partial_len)
+{
+	int r = strncmp(full, partial, partial_len);
+
+	if (r)
+		return r;
+	if (strlen(full) <= partial_len)
+		return 0;
+	return full[partial_len];
 }
 
 /**
@@ -1682,7 +1783,7 @@ parse_default(struct context *ctx, const struct token *token,
 	(void)ctx;
 	(void)buf;
 	(void)size;
-	if (strncmp(str, token->name, len))
+	if (strcmp_partial(token->name, str, len))
 		return -1;
 	return len;
 }
@@ -1925,7 +2026,7 @@ parse_vc_action_rss_queue(struct context *ctx, const struct token *token,
 	if (ctx->curr != ACTION_RSS_QUEUE)
 		return -1;
 	i = ctx->objdata >> 16;
-	if (!strncmp(str, "end", len)) {
+	if (!strcmp_partial("end", str, len)) {
 		ctx->objdata &= 0xffff;
 		return len;
 	}
@@ -2060,7 +2161,7 @@ parse_action(struct context *ctx, const struct token *token,
 		const struct parse_action_priv *priv;
 
 		token = &token_list[next_action[i]];
-		if (strncmp(token->name, str, len))
+		if (strcmp_partial(token->name, str, len))
 			continue;
 		priv = token->priv;
 		if (!priv)
@@ -2427,7 +2528,7 @@ parse_boolean(struct context *ctx, const struct token *token,
 	if (!arg)
 		return -1;
 	for (i = 0; boolean_name[i]; ++i)
-		if (!strncmp(str, boolean_name[i], len))
+		if (!strcmp_partial(boolean_name[i], str, len))
 			break;
 	/* Process token as integer. */
 	if (boolean_name[i])
@@ -2541,7 +2642,7 @@ comp_rule_id(struct context *ctx, const struct token *token,
 
 	(void)token;
 	if (port_id_is_invalid(ctx->port, DISABLED_WARN) ||
-	    ctx->port == (uint16_t)RTE_PORT_ALL)
+	    ctx->port == (portid_t)RTE_PORT_ALL)
 		return -1;
 	port = &ports[ctx->port];
 	for (pf = port->flow_list; pf != NULL; pf = pf->next) {
@@ -2587,7 +2688,6 @@ cmd_flow_context_init(struct context *ctx)
 	ctx->prev = ZERO;
 	ctx->next_num = 0;
 	ctx->args_num = 0;
-	ctx->reparse = 0;
 	ctx->eol = 0;
 	ctx->last = 0;
 	ctx->port = 0;
@@ -2608,9 +2708,6 @@ cmd_flow_parse(cmdline_parse_token_hdr_t *hdr, const char *src, void *result,
 	int i;
 
 	(void)hdr;
-	/* Restart as requested. */
-	if (ctx->reparse)
-		cmd_flow_context_init(ctx);
 	token = &token_list[ctx->curr];
 	/* Check argument length. */
 	ctx->eol = 0;
@@ -2686,8 +2783,6 @@ cmd_flow_complete_get_nb(cmdline_parse_token_hdr_t *hdr)
 	int i;
 
 	(void)hdr;
-	/* Tell cmd_flow_parse() that context must be reinitialized. */
-	ctx->reparse = 1;
 	/* Count number of tokens in current list. */
 	if (ctx->next_num)
 		list = ctx->next[ctx->next_num - 1];
@@ -2721,8 +2816,6 @@ cmd_flow_complete_get_elt(cmdline_parse_token_hdr_t *hdr, int index,
 	int i;
 
 	(void)hdr;
-	/* Tell cmd_flow_parse() that context must be reinitialized. */
-	ctx->reparse = 1;
 	/* Count number of tokens in current list. */
 	if (ctx->next_num)
 		list = ctx->next[ctx->next_num - 1];
@@ -2757,8 +2850,6 @@ cmd_flow_get_help(cmdline_parse_token_hdr_t *hdr, char *dst, unsigned int size)
 	const struct token *token = &token_list[ctx->prev];
 
 	(void)hdr;
-	/* Tell cmd_flow_parse() that context must be reinitialized. */
-	ctx->reparse = 1;
 	if (!size)
 		return -1;
 	/* Set token type and update global help with details. */
@@ -2784,12 +2875,12 @@ static struct cmdline_token_hdr cmd_flow_token_hdr = {
 /** Populate the next dynamic token. */
 static void
 cmd_flow_tok(cmdline_parse_token_hdr_t **hdr,
-	     cmdline_parse_token_hdr_t *(*hdrs)[])
+	     cmdline_parse_token_hdr_t **hdr_inst)
 {
 	struct context *ctx = &cmd_flow_context;
 
 	/* Always reinitialize context before requesting the first token. */
-	if (!(hdr - *hdrs))
+	if (!(hdr_inst - cmd_flow.tokens))
 		cmd_flow_context_init(ctx);
 	/* Return NULL when no more tokens are expected. */
 	if (!ctx->next_num && ctx->curr) {

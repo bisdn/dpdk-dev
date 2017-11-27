@@ -203,6 +203,8 @@ vmxnet3_dev_tx_queue_release(void *txq)
 		vmxnet3_cmd_ring_release(&tq->cmd_ring);
 		/* Release the memzone */
 		rte_memzone_free(tq->mz);
+		/* Release the queue */
+		rte_free(tq);
 	}
 }
 
@@ -223,6 +225,9 @@ vmxnet3_dev_rx_queue_release(void *rxq)
 
 		/* Release the memzone */
 		rte_memzone_free(rq->mz);
+
+		/* Release the queue */
+		rte_free(rq);
 	}
 }
 
@@ -265,11 +270,9 @@ vmxnet3_dev_rx_queue_reset(void *rxq)
 	struct vmxnet3_rx_data_ring *data_ring = &rq->data_ring;
 	int size;
 
-	if (rq != NULL) {
-		/* Release both the cmd_rings mbufs */
-		for (i = 0; i < VMXNET3_RX_CMDRING_SIZE; i++)
-			vmxnet3_rx_cmd_ring_release_mbufs(&rq->cmd_ring[i]);
-	}
+	/* Release both the cmd_rings mbufs */
+	for (i = 0; i < VMXNET3_RX_CMDRING_SIZE; i++)
+		vmxnet3_rx_cmd_ring_release_mbufs(&rq->cmd_ring[i]);
 
 	ring0 = &rq->cmd_ring[0];
 	ring1 = &rq->cmd_ring[1];
@@ -504,13 +507,14 @@ vmxnet3_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 			 */
 			gdesc = txq->cmd_ring.base + txq->cmd_ring.next2fill;
 			if (copy_size) {
-				uint64 offset = txq->cmd_ring.next2fill *
-						txq->txdata_desc_size;
+				uint64 offset =
+					(uint64)txq->cmd_ring.next2fill *
+							txq->txdata_desc_size;
 				gdesc->txd.addr =
 					rte_cpu_to_le_64(txq->data_ring.basePA +
 							 offset);
 			} else {
-				gdesc->txd.addr = rte_mbuf_data_dma_addr(m_seg);
+				gdesc->txd.addr = rte_mbuf_data_iova(m_seg);
 			}
 
 			gdesc->dword[2] = dw2 | m_seg->data_len;
@@ -593,24 +597,40 @@ static inline void
 vmxnet3_renew_desc(vmxnet3_rx_queue_t *rxq, uint8_t ring_id,
 		   struct rte_mbuf *mbuf)
 {
-	uint32_t val = 0;
+	uint32_t val;
 	struct vmxnet3_cmd_ring *ring = &rxq->cmd_ring[ring_id];
 	struct Vmxnet3_RxDesc *rxd =
 		(struct Vmxnet3_RxDesc *)(ring->base + ring->next2fill);
 	vmxnet3_buf_info_t *buf_info = &ring->buf_info[ring->next2fill];
 
-	if (ring_id == 0)
-		val = VMXNET3_RXD_BTYPE_HEAD;
-	else
-		val = VMXNET3_RXD_BTYPE_BODY;
+	if (ring_id == 0) {
+		/* Usually: One HEAD type buf per packet
+		 * val = (ring->next2fill % rxq->hw->bufs_per_pkt) ?
+		 * VMXNET3_RXD_BTYPE_BODY : VMXNET3_RXD_BTYPE_HEAD;
+		 */
 
+		/* We use single packet buffer so all heads here */
+		val = VMXNET3_RXD_BTYPE_HEAD;
+	} else {
+		/* All BODY type buffers for 2nd ring */
+		val = VMXNET3_RXD_BTYPE_BODY;
+	}
+
+	/*
+	 * Load mbuf pointer into buf_info[ring_size]
+	 * buf_info structure is equivalent to cookie for virtio-virtqueue
+	 */
 	buf_info->m = mbuf;
 	buf_info->len = (uint16_t)(mbuf->buf_len - RTE_PKTMBUF_HEADROOM);
-	buf_info->bufPA = rte_mbuf_data_dma_addr_default(mbuf);
+	buf_info->bufPA = rte_mbuf_data_iova_default(mbuf);
 
+	/* Load Rx Descriptor with the buffer's GPA */
 	rxd->addr = buf_info->bufPA;
+
+	/* After this point rxd->addr MUST not be NULL */
 	rxd->btype = val;
 	rxd->len = buf_info->len;
+	/* Flip gen bit at the end to change ownership */
 	rxd->gen = ring->gen;
 
 	vmxnet3_cmd_ring_adv_next2fill(ring);
@@ -629,28 +649,11 @@ static int
 vmxnet3_post_rx_bufs(vmxnet3_rx_queue_t *rxq, uint8_t ring_id)
 {
 	int err = 0;
-	uint32_t i = 0, val = 0;
+	uint32_t i = 0;
 	struct vmxnet3_cmd_ring *ring = &rxq->cmd_ring[ring_id];
 
-	if (ring_id == 0) {
-		/* Usually: One HEAD type buf per packet
-		 * val = (ring->next2fill % rxq->hw->bufs_per_pkt) ?
-		 * VMXNET3_RXD_BTYPE_BODY : VMXNET3_RXD_BTYPE_HEAD;
-		 */
-
-		/* We use single packet buffer so all heads here */
-		val = VMXNET3_RXD_BTYPE_HEAD;
-	} else {
-		/* All BODY type buffers for 2nd ring */
-		val = VMXNET3_RXD_BTYPE_BODY;
-	}
-
 	while (vmxnet3_cmd_ring_desc_avail(ring) > 0) {
-		struct Vmxnet3_RxDesc *rxd;
 		struct rte_mbuf *mbuf;
-		vmxnet3_buf_info_t *buf_info = &ring->buf_info[ring->next2fill];
-
-		rxd = (struct Vmxnet3_RxDesc *)(ring->base + ring->next2fill);
 
 		/* Allocate blank mbuf for the current Rx Descriptor */
 		mbuf = rte_mbuf_raw_alloc(rxq->mp);
@@ -661,25 +664,7 @@ vmxnet3_post_rx_bufs(vmxnet3_rx_queue_t *rxq, uint8_t ring_id)
 			break;
 		}
 
-		/*
-		 * Load mbuf pointer into buf_info[ring_size]
-		 * buf_info structure is equivalent to cookie for virtio-virtqueue
-		 */
-		buf_info->m = mbuf;
-		buf_info->len = (uint16_t)(mbuf->buf_len -
-					   RTE_PKTMBUF_HEADROOM);
-		buf_info->bufPA = rte_mbuf_data_dma_addr_default(mbuf);
-
-		/* Load Rx Descriptor with the buffer's GPA */
-		rxd->addr = buf_info->bufPA;
-
-		/* After this point rxd->addr MUST not be NULL */
-		rxd->btype = val;
-		rxd->len = buf_info->len;
-		/* Flip gen bit at the end to change ownership */
-		rxd->gen = ring->gen;
-
-		vmxnet3_cmd_ring_adv_next2fill(ring);
+		vmxnet3_renew_desc(rxq, ring_id, mbuf);
 		i++;
 	}
 
@@ -800,6 +785,12 @@ vmxnet3_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 				   (int)(rcd - (struct Vmxnet3_RxCompDesc *)
 					 rxq->comp_ring.base), rcd->rxdIdx);
 			rte_pktmbuf_free_seg(rxm);
+			if (rxq->start_seg) {
+				struct rte_mbuf *start = rxq->start_seg;
+
+				rxq->start_seg = NULL;
+				rte_pktmbuf_free(start);
+			}
 			goto rcd_done;
 		}
 
@@ -861,7 +852,8 @@ vmxnet3_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 
 			/* Check for hardware stripped VLAN tag */
 			if (rcd->ts) {
-				start->ol_flags |= (PKT_RX_VLAN_PKT | PKT_RX_VLAN_STRIPPED);
+				start->ol_flags |= (PKT_RX_VLAN |
+						PKT_RX_VLAN_STRIPPED);
 				start->vlan_tci = rte_le_to_cpu_16((uint16_t)rcd->tci);
 			}
 
@@ -890,6 +882,23 @@ rcd_done:
 			PMD_RX_LOG(ERR, "Used up quota of receiving packets,"
 				   " relinquish control.");
 			break;
+		}
+	}
+
+	if (unlikely(nb_rxd == 0)) {
+		uint32_t avail;
+		for (ring_idx = 0; ring_idx < VMXNET3_RX_CMDRING_SIZE; ring_idx++) {
+			avail = vmxnet3_cmd_ring_desc_avail(&rxq->cmd_ring[ring_idx]);
+			if (unlikely(avail > 0)) {
+				/* try to alloc new buf and renew descriptors */
+				vmxnet3_post_rx_bufs(rxq, ring_idx);
+			}
+		}
+		if (unlikely(rxq->shared->ctrl.updateRxProd)) {
+			for (ring_idx = 0; ring_idx < VMXNET3_RX_CMDRING_SIZE; ring_idx++) {
+				VMXNET3_WRITE_BAR0_REG(hw, rxprod_reg[ring_idx] + (rxq->queue_id * VMXNET3_REG_ALIGN),
+						       rxq->cmd_ring[ring_idx].next2fill);
+			}
 		}
 	}
 
@@ -975,7 +984,7 @@ vmxnet3_dev_tx_queue_setup(struct rte_eth_dev *dev,
 
 	/* cmd_ring initialization */
 	ring->base = mz->addr;
-	ring->basePA = mz->phys_addr;
+	ring->basePA = mz->iova;
 
 	/* comp_ring initialization */
 	comp_ring->base = ring->base + ring->size;
@@ -1086,7 +1095,7 @@ vmxnet3_dev_rx_queue_setup(struct rte_eth_dev *dev,
 
 	/* cmd_ring0 initialization */
 	ring0->base = mz->addr;
-	ring0->basePA = mz->phys_addr;
+	ring0->basePA = mz->iova;
 
 	/* cmd_ring1 initialization */
 	ring1->base = ring0->base + ring0->size;

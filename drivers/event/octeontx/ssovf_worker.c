@@ -1,7 +1,7 @@
 /*
  *   BSD LICENSE
  *
- *   Copyright (C) Cavium networks Ltd. 2017.
+ *   Copyright (C) Cavium, Inc. 2017.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -13,7 +13,7 @@
  *       notice, this list of conditions and the following disclaimer in
  *       the documentation and/or other materials provided with the
  *       distribution.
- *     * Neither the name of Cavium networks nor the names of its
+ *     * Neither the name of Cavium, Inc nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -126,9 +126,9 @@ ssows_deq(void *port, struct rte_event *ev, uint64_t timeout_ticks)
 
 	RTE_SET_USED(timeout_ticks);
 
-	ssows_swtag_wait(ws);
 	if (ws->swtag_req) {
 		ws->swtag_req = 0;
+		ssows_swtag_wait(ws);
 		return 1;
 	} else {
 		return ssows_get_work(ws, ev);
@@ -142,9 +142,9 @@ ssows_deq_timeout(void *port, struct rte_event *ev, uint64_t timeout_ticks)
 	uint64_t iter;
 	uint16_t ret = 1;
 
-	ssows_swtag_wait(ws);
 	if (ws->swtag_req) {
 		ws->swtag_req = 0;
+		ssows_swtag_wait(ws);
 	} else {
 		ret = ssows_get_work(ws, ev);
 		for (iter = 1; iter < timeout_ticks && (ret == 0); iter++)
@@ -179,6 +179,7 @@ ssows_enq(void *port, const struct rte_event *ev)
 
 	switch (ev->op) {
 	case RTE_EVENT_OP_NEW:
+		rte_smp_wmb();
 		ssows_new_event(ws, ev);
 		break;
 	case RTE_EVENT_OP_FORWARD:
@@ -198,6 +199,30 @@ ssows_enq_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
 {
 	RTE_SET_USED(nb_events);
 	return ssows_enq(port, ev);
+}
+
+uint16_t __hot
+ssows_enq_new_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
+{
+	uint16_t i;
+	struct ssows *ws = port;
+
+	rte_smp_wmb();
+	for (i = 0; i < nb_events; i++)
+		ssows_new_event(ws,  &ev[i]);
+
+	return nb_events;
+}
+
+uint16_t __hot
+ssows_enq_fwd_burst(void *port, const struct rte_event ev[], uint16_t nb_events)
+{
+	struct ssows *ws = port;
+	RTE_SET_USED(nb_events);
+
+	ssows_forward_event(ws,  ev);
+
+	return 1;
 }
 
 void

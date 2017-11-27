@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -31,12 +31,13 @@
  */
 
 #include <rte_common.h>
-#include <rte_config.h>
 #include <rte_cryptodev_pmd.h>
-#include <rte_vdev.h>
+#include <rte_bus_vdev.h>
 #include <rte_malloc.h>
 
 #include "null_crypto_pmd_private.h"
+
+static uint8_t cryptodev_driver_id;
 
 /** verify and set session parameters */
 int
@@ -45,7 +46,7 @@ null_crypto_set_session_parameters(
 		const struct rte_crypto_sym_xform *xform)
 {
 	if (xform == NULL) {
-		return -1;
+		return -EINVAL;
 	} else if (xform->type == RTE_CRYPTO_SYM_XFORM_AUTH &&
 			xform->next == NULL) {
 		/* Authentication Only */
@@ -70,7 +71,7 @@ null_crypto_set_session_parameters(
 			return 0;
 	}
 
-	return -1;
+	return -ENOTSUP;
 }
 
 /** Process crypto operation for mbuf */
@@ -81,6 +82,14 @@ process_op(const struct null_crypto_qp *qp, struct rte_crypto_op *op,
 	/* set status as successful by default */
 	op->status = RTE_CRYPTO_OP_STATUS_SUCCESS;
 
+	/* Free session if a session-less crypto op. */
+	if (op->sess_type == RTE_CRYPTO_OP_SESSIONLESS) {
+		memset(op->sym->session, 0,
+				sizeof(struct null_crypto_session));
+		rte_cryptodev_sym_session_free(op->sym->session);
+		op->sym->session = NULL;
+	}
+
 	/*
 	 * if crypto session and operation are valid just enqueue the packet
 	 * in the processed ring
@@ -89,26 +98,37 @@ process_op(const struct null_crypto_qp *qp, struct rte_crypto_op *op,
 }
 
 static struct null_crypto_session *
-get_session(struct null_crypto_qp *qp, struct rte_crypto_sym_op *op)
+get_session(struct null_crypto_qp *qp, struct rte_crypto_op *op)
 {
-	struct null_crypto_session *sess;
+	struct null_crypto_session *sess = NULL;
+	struct rte_crypto_sym_op *sym_op = op->sym;
 
-	if (op->sess_type == RTE_CRYPTO_SYM_OP_WITH_SESSION) {
-		if (unlikely(op->session == NULL ||
-			     op->session->dev_type != RTE_CRYPTODEV_NULL_PMD))
+	if (op->sess_type == RTE_CRYPTO_OP_WITH_SESSION) {
+		if (likely(sym_op->session != NULL))
+			sess = (struct null_crypto_session *)
+					get_session_private_data(
+					sym_op->session, cryptodev_driver_id);
+	} else {
+		void *_sess = NULL;
+		void *_sess_private_data = NULL;
+
+		if (rte_mempool_get(qp->sess_mp, (void **)&_sess))
 			return NULL;
 
-		sess = (struct null_crypto_session *)op->session->_private;
-	} else  {
-		struct rte_cryptodev_session *c_sess = NULL;
-
-		if (rte_mempool_get(qp->sess_mp, (void **)&c_sess))
+		if (rte_mempool_get(qp->sess_mp, (void **)&_sess_private_data))
 			return NULL;
 
-		sess = (struct null_crypto_session *)c_sess->_private;
+		sess = (struct null_crypto_session *)_sess_private_data;
 
-		if (null_crypto_set_session_parameters(sess, op->xform)	!= 0)
-			return NULL;
+		if (unlikely(null_crypto_set_session_parameters(sess,
+				sym_op->xform) != 0)) {
+			rte_mempool_put(qp->sess_mp, _sess);
+			rte_mempool_put(qp->sess_mp, _sess_private_data);
+			sess = NULL;
+		}
+		sym_op->session = (struct rte_cryptodev_sym_session *)_sess;
+		set_session_private_data(sym_op->session, cryptodev_driver_id,
+			_sess_private_data);
 	}
 
 	return sess;
@@ -125,7 +145,7 @@ null_crypto_pmd_enqueue_burst(void *queue_pair, struct rte_crypto_op **ops,
 	int i, retval;
 
 	for (i = 0; i < nb_ops; i++) {
-		sess = get_session(qp, ops[i]->sym);
+		sess = get_session(qp, ops[i]);
 		if (unlikely(sess == NULL))
 			goto enqueue_err;
 
@@ -161,29 +181,22 @@ null_crypto_pmd_dequeue_burst(void *queue_pair, struct rte_crypto_op **ops,
 	return nb_dequeued;
 }
 
-static int cryptodev_null_remove(const char *name);
-
 /** Create crypto device */
 static int
 cryptodev_null_create(const char *name,
-		struct rte_crypto_vdev_init_params *init_params)
+		struct rte_vdev_device *vdev,
+		struct rte_cryptodev_pmd_init_params *init_params)
 {
 	struct rte_cryptodev *dev;
 	struct null_crypto_private *internals;
 
-	if (init_params->name[0] == '\0')
-		snprintf(init_params->name, sizeof(init_params->name),
-				"%s", name);
-
-	dev = rte_cryptodev_pmd_virtual_dev_init(init_params->name,
-			sizeof(struct null_crypto_private),
-			init_params->socket_id);
+	dev = rte_cryptodev_pmd_create(name, &vdev->device, init_params);
 	if (dev == NULL) {
 		NULL_CRYPTO_LOG_ERR("failed to create cryptodev vdev");
-		goto init_error;
+		return -EFAULT;
 	}
 
-	dev->dev_type = RTE_CRYPTODEV_NULL_PMD;
+	dev->driver_id = cryptodev_driver_id;
 	dev->dev_ops = null_crypto_pmd_ops;
 
 	/* register rx/tx burst functions for data path */
@@ -200,61 +213,53 @@ cryptodev_null_create(const char *name,
 	internals->max_nb_sessions = init_params->max_nb_sessions;
 
 	return 0;
-
-init_error:
-	NULL_CRYPTO_LOG_ERR("driver %s: cryptodev_null_create failed",
-			init_params->name);
-	cryptodev_null_remove(init_params->name);
-
-	return -EFAULT;
 }
 
 /** Initialise null crypto device */
 static int
 cryptodev_null_probe(struct rte_vdev_device *dev)
 {
-	struct rte_crypto_vdev_init_params init_params = {
-		RTE_CRYPTODEV_VDEV_DEFAULT_MAX_NB_QUEUE_PAIRS,
-		RTE_CRYPTODEV_VDEV_DEFAULT_MAX_NB_SESSIONS,
+	struct rte_cryptodev_pmd_init_params init_params = {
+		"",
+		sizeof(struct null_crypto_private),
 		rte_socket_id(),
-		{0}
+		RTE_CRYPTODEV_PMD_DEFAULT_MAX_NB_QUEUE_PAIRS,
+		RTE_CRYPTODEV_PMD_DEFAULT_MAX_NB_SESSIONS
 	};
-	const char *name;
+	const char *name, *args;
+	int retval;
 
 	name = rte_vdev_device_name(dev);
 	if (name == NULL)
 		return -EINVAL;
 
-	RTE_LOG(INFO, PMD, "Initialising %s on NUMA node %d\n",
-		name, init_params.socket_id);
-	if (init_params.name[0] != '\0')
-		RTE_LOG(INFO, PMD, "  User defined name = %s\n",
-			init_params.name);
-	RTE_LOG(INFO, PMD, "  Max number of queue pairs = %d\n",
-			init_params.max_nb_queue_pairs);
-	RTE_LOG(INFO, PMD, "  Max number of sessions = %d\n",
-			init_params.max_nb_sessions);
+	args = rte_vdev_device_args(dev);
 
-	return cryptodev_null_create(name, &init_params);
+	retval = rte_cryptodev_pmd_parse_input_args(&init_params, args);
+	if (retval) {
+		RTE_LOG(ERR, PMD,
+			"Failed to parse initialisation arguments[%s]\n", args);
+		return -EINVAL;
+	}
+
+	return cryptodev_null_create(name, dev, &init_params);
 }
 
-/** Uninitialise null crypto device */
 static int
-cryptodev_null_remove(const char *name)
+cryptodev_null_remove_dev(struct rte_vdev_device *vdev)
 {
+	struct rte_cryptodev *cryptodev;
+	const char *name;
+
+	name = rte_vdev_device_name(vdev);
 	if (name == NULL)
 		return -EINVAL;
 
-	RTE_LOG(INFO, PMD, "Closing null crypto device %s on numa socket %u\n",
-			name, rte_socket_id());
+	cryptodev = rte_cryptodev_pmd_get_named_dev(name);
+	if (cryptodev == NULL)
+		return -ENODEV;
 
-	return 0;
-}
-
-static int
-cryptodev_null_remove_dev(struct rte_vdev_device *dev)
-{
-	return cryptodev_null_remove(rte_vdev_device_name(dev));
+	return rte_cryptodev_pmd_destroy(cryptodev);
 }
 
 static struct rte_vdev_driver cryptodev_null_pmd_drv = {
@@ -262,9 +267,13 @@ static struct rte_vdev_driver cryptodev_null_pmd_drv = {
 	.remove = cryptodev_null_remove_dev,
 };
 
+static struct cryptodev_driver null_crypto_drv;
+
 RTE_PMD_REGISTER_VDEV(CRYPTODEV_NAME_NULL_PMD, cryptodev_null_pmd_drv);
 RTE_PMD_REGISTER_ALIAS(CRYPTODEV_NAME_NULL_PMD, cryptodev_null_pmd);
 RTE_PMD_REGISTER_PARAM_STRING(CRYPTODEV_NAME_NULL_PMD,
 	"max_nb_queue_pairs=<int> "
 	"max_nb_sessions=<int> "
 	"socket_id=<int>");
+RTE_PMD_REGISTER_CRYPTO_DRIVER(null_crypto_drv, cryptodev_null_pmd_drv,
+		cryptodev_driver_id);

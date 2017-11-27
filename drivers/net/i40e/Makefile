@@ -39,10 +39,13 @@ LIB = librte_pmd_i40e.a
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS) -DPF_DRIVER -DVF_DRIVER -DINTEGRATED_VF
 CFLAGS += -DX722_A0_SUPPORT
+LDLIBS += -lrte_eal -lrte_mbuf -lrte_mempool -lrte_ring
+LDLIBS += -lrte_ethdev -lrte_net -lrte_kvargs -lrte_hash
+LDLIBS += -lrte_bus_pci
 
 EXPORT_MAP := rte_pmd_i40e_version.map
 
-LIBABIVER := 1
+LIBABIVER := 2
 
 #
 # Add extra flags for base driver files (also known as shared code)
@@ -78,7 +81,7 @@ endif
 
 CFLAGS_i40e_lan_hmc.o += -Wno-error
 endif
-OBJS_BASE_DRIVER=$(patsubst %.c,%.o,$(notdir $(wildcard $(SRCDIR)/base/*.c)))
+OBJS_BASE_DRIVER=$(sort $(patsubst %.c,%.o,$(notdir $(wildcard $(SRCDIR)/base/*.c))))
 $(foreach obj, $(OBJS_BASE_DRIVER), $(eval CFLAGS_$(obj)+=$(CFLAGS_BASE_DRIVER)))
 
 VPATH += $(SRCDIR)/base
@@ -109,11 +112,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_pf.c
 SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_fdir.c
 SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_flow.c
 SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += rte_pmd_i40e.c
-
-# vector PMD driver needs SSE4.1 support
-ifeq ($(findstring RTE_MACHINE_CPUFLAG_SSE4_1,$(CFLAGS)),)
-CFLAGS_i40e_rxtx_vec_sse.o += -msse4.1
-endif
+SRCS-$(CONFIG_RTE_LIBRTE_I40E_PMD) += i40e_tm.c
 
 # install this header file
 SYMLINK-$(CONFIG_RTE_LIBRTE_I40E_PMD)-include := rte_pmd_i40e.h

@@ -98,12 +98,14 @@ Running a Sample Application
 
 .. warning::
 
-    The UIO drivers and hugepages must be setup prior to running an application.
+    Before running the application make sure:
 
-.. warning::
+    - Hugepages setup is done.
+    - Any kernel driver being used is loaded.
+    - In case needed, ports being used by the application should be
+      bound to the corresponding kernel driver.
 
-    Any ports to be used by the application must be already bound to an appropriate kernel
-    module, as described in :ref:`linux_gsg_binding_kernel`, prior to running the application.
+    refer to :ref:`linux_gsg_linux_drivers` for more details.
 
 The application is linked with the DPDK target environment's Environmental Abstraction Layer (EAL) library,
 which provides some options that are generic to every DPDK application.
@@ -114,7 +116,7 @@ The following is the list of options that can be given to the EAL:
 
     ./rte-app [-c COREMASK | -l CORELIST] [-n NUM] [-b <domain:bus:devid.func>] \
               [--socket-mem=MB,...] [-d LIB.so|DIR] [-m MB] [-r NUM] [-v] [--file-prefix] \
-	      [--proc-type <primary|secondary|auto>] [-- xen-dom0]
+	      [--proc-type <primary|secondary|auto>]
 
 The EAL options are as follows:
 
@@ -155,14 +157,14 @@ The EAL options are as follows:
 * ``--huge-dir``:
   The directory where hugetlbfs is mounted.
 
+* ``mbuf-pool-ops-name``:
+  Pool ops name for mbuf to use.
+
 * ``--file-prefix``:
   The prefix text used for hugepage filenames.
 
 * ``--proc-type``:
   The type of process instance.
-
-* ``--xen-dom0``:
-  Support application running on Xen Domain0 without hugetlbfs.
 
 * ``--vmware-tsc-map``:
   Use VMware TSC map instead of native RDTSC.

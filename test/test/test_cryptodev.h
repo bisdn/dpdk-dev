@@ -1,7 +1,7 @@
 /*-
  *   BSD LICENSE
  *
- *   Copyright(c) 2015-2016 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2015-2017 Intel Corporation. All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions
@@ -71,6 +71,25 @@
 #define TRUNCATED_DIGEST_BYTE_LENGTH_SHA384		(24)
 #define TRUNCATED_DIGEST_BYTE_LENGTH_SHA512		(32)
 
+#define MAXIMUM_IV_LENGTH				(16)
+
+#define IV_OFFSET			(sizeof(struct rte_crypto_op) + \
+		sizeof(struct rte_crypto_sym_op) + DEFAULT_NUM_XFORMS * \
+		sizeof(struct rte_crypto_sym_xform))
+
+#define CRYPTODEV_NAME_NULL_PMD		crypto_null
+#define CRYPTODEV_NAME_AESNI_MB_PMD	crypto_aesni_mb
+#define CRYPTODEV_NAME_AESNI_GCM_PMD	crypto_aesni_gcm
+#define CRYPTODEV_NAME_OPENSSL_PMD	crypto_openssl
+#define CRYPTODEV_NAME_QAT_SYM_PMD	crypto_qat
+#define CRYPTODEV_NAME_SNOW3G_PMD	crypto_snow3g
+#define CRYPTODEV_NAME_KASUMI_PMD	crypto_kasumi
+#define CRYPTODEV_NAME_ZUC_PMD		crypto_zuc
+#define CRYPTODEV_NAME_ARMV8_PMD	crypto_armv8
+#define CRYPTODEV_NAME_DPAA2_SEC_PMD	crypto_dpaa2_sec
+#define CRYPTODEV_NAME_SCHEDULER_PMD	crypto_scheduler
+#define CRYPTODEV_NAME_MRVL_PMD		crypto_mrvl
+
 /**
  * Write (spread) data from buffer to mbuf data
  *
@@ -134,18 +153,18 @@ pktmbuf_mtod_offset(struct rte_mbuf *mbuf, int offset) {
 	return rte_pktmbuf_mtod_offset(m, uint8_t *, offset);
 }
 
-static inline phys_addr_t
-pktmbuf_mtophys_offset(struct rte_mbuf *mbuf, int offset) {
+static inline rte_iova_t
+pktmbuf_iova_offset(struct rte_mbuf *mbuf, int offset) {
 	struct rte_mbuf *m;
 
 	for (m = mbuf; (m != NULL) && (offset > m->data_len); m = m->next)
 		offset -= m->data_len;
 
 	if (m == NULL) {
-		printf("pktmbuf_mtophys_offset: offset out of buffer\n");
+		printf("pktmbuf_iova_offset: offset out of buffer\n");
 		return 0;
 	}
-	return rte_pktmbuf_mtophys_offset(m, offset);
+	return rte_pktmbuf_iova_offset(m, offset);
 }
 
 static inline struct rte_mbuf *
