@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2016 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2016 Intel Corporation
  */
 
 #include <stdio.h>
@@ -217,6 +188,8 @@ static struct rte_eth_conf port_conf = {
 	},
 	.txmode = {
 		.mq_mode = ETH_MQ_TX_NONE,
+		.offloads = (DEV_TX_OFFLOAD_IPV4_CKSUM |
+			     DEV_TX_OFFLOAD_MULTI_SEGS),
 	},
 };
 
@@ -1358,6 +1331,7 @@ port_init(uint16_t portid)
 	int32_t ret, socket_id;
 	struct lcore_conf *qconf;
 	struct ether_addr ethaddr;
+	struct rte_eth_conf local_port_conf = port_conf;
 
 	rte_eth_dev_info_get(portid, &dev_info);
 
@@ -1385,17 +1359,19 @@ port_init(uint16_t portid)
 			nb_rx_queue, nb_tx_queue);
 
 	if (frame_size) {
-		port_conf.rxmode.max_rx_pkt_len = frame_size;
-		port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+		local_port_conf.rxmode.max_rx_pkt_len = frame_size;
+		local_port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
 	}
 
 	if (dev_info.rx_offload_capa & DEV_RX_OFFLOAD_SECURITY)
-		port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_SECURITY;
+		local_port_conf.rxmode.offloads |= DEV_RX_OFFLOAD_SECURITY;
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_SECURITY)
-		port_conf.txmode.offloads |= DEV_TX_OFFLOAD_SECURITY;
-
+		local_port_conf.txmode.offloads |= DEV_TX_OFFLOAD_SECURITY;
+	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+		local_port_conf.txmode.offloads |=
+			DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 	ret = rte_eth_dev_configure(portid, nb_rx_queue, nb_tx_queue,
-			&port_conf);
+			&local_port_conf);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Cannot configure device: "
 				"err=%d, port=%d\n", ret, portid);
@@ -1420,7 +1396,8 @@ port_init(uint16_t portid)
 		printf("Setup txq=%u,%d,%d\n", lcore_id, tx_queueid, socket_id);
 
 		txconf = &dev_info.default_txconf;
-		txconf->txq_flags = 0;
+		txconf->txq_flags = ETH_TXQ_FLAGS_IGNORE;
+		txconf->offloads = local_port_conf.txmode.offloads;
 
 		ret = rte_eth_tx_queue_setup(portid, tx_queueid, nb_txd,
 				socket_id, txconf);
@@ -1434,6 +1411,8 @@ port_init(uint16_t portid)
 
 		/* init RX queues */
 		for (queue = 0; queue < qconf->nb_rx_queue; ++queue) {
+			struct rte_eth_rxconf rxq_conf;
+
 			if (portid != qconf->rx_queue_list[queue].port_id)
 				continue;
 
@@ -1442,8 +1421,10 @@ port_init(uint16_t portid)
 			printf("Setup rxq=%d,%d,%d\n", portid, rx_queueid,
 					socket_id);
 
+			rxq_conf = dev_info.default_rxconf;
+			rxq_conf.offloads = local_port_conf.rxmode.offloads;
 			ret = rte_eth_rx_queue_setup(portid, rx_queueid,
-					nb_rxd,	socket_id, NULL,
+					nb_rxd,	socket_id, &rxq_conf,
 					socket_ctx[socket_id].mbuf_pool);
 			if (ret < 0)
 				rte_exit(EXIT_FAILURE,

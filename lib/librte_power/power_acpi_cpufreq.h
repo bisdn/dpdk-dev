@@ -1,38 +1,9 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2014 Intel Corporation
  */
 
-#ifndef _RTE_POWER_ACPI_CPUFREQ_H
-#define _RTE_POWER_ACPI_CPUFREQ_H
+#ifndef _POWER_ACPI_CPUFREQ_H
+#define _POWER_ACPI_CPUFREQ_H
 
 /**
  * @file
@@ -60,7 +31,7 @@ extern "C" {
  *  - 0 on success.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_init(unsigned lcore_id);
+int power_acpi_cpufreq_init(unsigned int lcore_id);
 
 /**
  * Exit power management on a specific lcore. It will set the governor to which
@@ -73,7 +44,7 @@ int rte_power_acpi_cpufreq_init(unsigned lcore_id);
  *  - 0 on success.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_exit(unsigned lcore_id);
+int power_acpi_cpufreq_exit(unsigned int lcore_id);
 
 /**
  * Get the available frequencies of a specific lcore. The return value will be
@@ -92,7 +63,7 @@ int rte_power_acpi_cpufreq_exit(unsigned lcore_id);
  * @return
  *  The number of available frequencies.
  */
-uint32_t rte_power_acpi_cpufreq_freqs(unsigned lcore_id, uint32_t *freqs,
+uint32_t power_acpi_cpufreq_freqs(unsigned int lcore_id, uint32_t *freqs,
 		uint32_t num);
 
 /**
@@ -106,7 +77,7 @@ uint32_t rte_power_acpi_cpufreq_freqs(unsigned lcore_id, uint32_t *freqs,
  * @return
  *  The current index of available frequencies.
  */
-uint32_t rte_power_acpi_cpufreq_get_freq(unsigned lcore_id);
+uint32_t power_acpi_cpufreq_get_freq(unsigned int lcore_id);
 
 /**
  * Set the new frequency for a specific lcore by indicating the index of
@@ -123,7 +94,7 @@ uint32_t rte_power_acpi_cpufreq_get_freq(unsigned lcore_id);
  *  - 0 on success without frequency changed.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_set_freq(unsigned lcore_id, uint32_t index);
+int power_acpi_cpufreq_set_freq(unsigned int lcore_id, uint32_t index);
 
 /**
  * Scale up the frequency of a specific lcore according to the available
@@ -138,7 +109,7 @@ int rte_power_acpi_cpufreq_set_freq(unsigned lcore_id, uint32_t index);
  *  - 0 on success without frequency changed.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_freq_up(unsigned lcore_id);
+int power_acpi_cpufreq_freq_up(unsigned int lcore_id);
 
 /**
  * Scale down the frequency of a specific lcore according to the available
@@ -153,7 +124,7 @@ int rte_power_acpi_cpufreq_freq_up(unsigned lcore_id);
  *  - 0 on success without frequency changed.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_freq_down(unsigned lcore_id);
+int power_acpi_cpufreq_freq_down(unsigned int lcore_id);
 
 /**
  * Scale up the frequency of a specific lcore to the highest according to the
@@ -168,7 +139,7 @@ int rte_power_acpi_cpufreq_freq_down(unsigned lcore_id);
  *  - 0 on success without frequency changed.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_freq_max(unsigned lcore_id);
+int power_acpi_cpufreq_freq_max(unsigned int lcore_id);
 
 /**
  * Scale down the frequency of a specific lcore to the lowest according to the
@@ -183,7 +154,7 @@ int rte_power_acpi_cpufreq_freq_max(unsigned lcore_id);
  *  - 0 on success without frequency changed.
  *  - Negative on error.
  */
-int rte_power_acpi_cpufreq_freq_min(unsigned lcore_id);
+int power_acpi_cpufreq_freq_min(unsigned int lcore_id);
 
 /**
  * Get the turbo status of a specific lcore.
@@ -197,7 +168,7 @@ int rte_power_acpi_cpufreq_freq_min(unsigned lcore_id);
  *  - 0 Turbo Boost is disabled on this lcore.
  *  - Negative on error.
  */
-int rte_power_acpi_turbo_status(unsigned int lcore_id);
+int power_acpi_turbo_status(unsigned int lcore_id);
 
 /**
  * Enable Turbo Boost on a specific lcore.
@@ -210,7 +181,7 @@ int rte_power_acpi_turbo_status(unsigned int lcore_id);
  *  - 0 Turbo Boost is enabled successfully on this lcore.
  *  - Negative on error.
  */
-int rte_power_acpi_enable_turbo(unsigned int lcore_id);
+int power_acpi_enable_turbo(unsigned int lcore_id);
 
 /**
  * Disable Turbo Boost on a specific lcore.
@@ -223,7 +194,7 @@ int rte_power_acpi_enable_turbo(unsigned int lcore_id);
  *  - 0 Turbo Boost disabled successfully on this lcore.
  *  - Negative on error.
  */
-int rte_power_acpi_disable_turbo(unsigned int lcore_id);
+int power_acpi_disable_turbo(unsigned int lcore_id);
 
 #ifdef __cplusplus
 }

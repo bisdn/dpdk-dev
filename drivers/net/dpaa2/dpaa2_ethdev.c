@@ -1,34 +1,8 @@
-/*-
- *   BSD LICENSE
+/* * SPDX-License-Identifier: BSD-3-Clause
  *
  *   Copyright (c) 2016 Freescale Semiconductor, Inc. All rights reserved.
- *   Copyright 2016 NXP.
+ *   Copyright 2016 NXP
  *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Freescale Semiconductor, Inc nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <time.h>
@@ -51,6 +25,7 @@
 #include <dpaa2_hw_dpio.h>
 #include <mc/fsl_dpmng.h>
 #include "dpaa2_ethdev.h"
+#include <fsl_qbman_debug.h>
 
 struct rte_dpaa2_xstats_name_off {
 	char name[RTE_ETH_XSTATS_NAME_SIZE];
@@ -346,8 +321,8 @@ dpaa2_eth_dev_configure(struct rte_eth_dev *dev)
 
 	if (eth_conf->rxmode.jumbo_frame == 1) {
 		if (eth_conf->rxmode.max_rx_pkt_len <= DPAA2_MAX_RX_PKT_LEN) {
-			ret = dpaa2_dev_mtu_set(dev,
-					eth_conf->rxmode.max_rx_pkt_len);
+			ret = dpni_set_max_frame_length(dpni, CMD_PRI_LOW,
+				priv->token, eth_conf->rxmode.max_rx_pkt_len);
 			if (ret) {
 				PMD_INIT_LOG(ERR,
 					     "unable to set mtu. check config\n");
@@ -418,7 +393,6 @@ dpaa2_dev_rx_queue_setup(struct rte_eth_dev *dev,
 {
 	struct dpaa2_dev_priv *priv = dev->data->dev_private;
 	struct fsl_mc_io *dpni = (struct fsl_mc_io *)priv->hw;
-	struct mc_soc_version mc_plat_info = {0};
 	struct dpaa2_queue *dpaa2_q;
 	struct dpni_queue cfg;
 	uint8_t options = 0;
@@ -450,18 +424,20 @@ dpaa2_dev_rx_queue_setup(struct rte_eth_dev *dev,
 
 	/*if ls2088 or rev2 device, enable the stashing */
 
-	if (mc_get_soc_version(dpni, CMD_PRI_LOW, &mc_plat_info))
-		PMD_INIT_LOG(ERR, "\tmc_get_soc_version failed\n");
-
-	if ((mc_plat_info.svr & 0xffff0000) != SVR_LS2080A) {
+	if ((dpaa2_svr_family & 0xffff0000) != SVR_LS2080A) {
 		options |= DPNI_QUEUE_OPT_FLC;
 		cfg.flc.stash_control = true;
 		cfg.flc.value &= 0xFFFFFFFFFFFFFFC0;
 		/* 00 00 00 - last 6 bit represent annotation, context stashing,
-		 * data stashing setting 01 01 00 (0x14) to enable
-		 * 1 line data, 1 line annotation
+		 * data stashing setting 01 01 00 (0x14)
+		 * (in following order ->DS AS CS)
+		 * to enable 1 line data, 1 line annotation.
+		 * For LX2, this setting should be 01 00 00 (0x10)
 		 */
-		cfg.flc.value |= 0x14;
+		if ((dpaa2_svr_family & 0xffff0000) == SVR_LX2160A)
+			cfg.flc.value |= 0x10;
+		else
+			cfg.flc.value |= 0x14;
 	}
 	ret = dpni_set_queue(dpni, CMD_PRI_LOW, priv->token, DPNI_QUEUE_RX,
 			     dpaa2_q->tc_index, flow_id, options, &cfg);
@@ -594,6 +570,37 @@ dpaa2_dev_tx_queue_release(void *q __rte_unused)
 	PMD_INIT_FUNC_TRACE();
 }
 
+static uint32_t
+dpaa2_dev_rx_queue_count(struct rte_eth_dev *dev, uint16_t rx_queue_id)
+{
+	int32_t ret;
+	struct dpaa2_dev_priv *priv = dev->data->dev_private;
+	struct dpaa2_queue *dpaa2_q;
+	struct qbman_swp *swp;
+	struct qbman_fq_query_np_rslt state;
+	uint32_t frame_cnt = 0;
+
+	PMD_INIT_FUNC_TRACE();
+
+	if (unlikely(!DPAA2_PER_LCORE_DPIO)) {
+		ret = dpaa2_affine_qbman_swp();
+		if (ret) {
+			RTE_LOG(ERR, PMD, "Failure in affining portal\n");
+			return -EINVAL;
+		}
+	}
+	swp = DPAA2_PER_LCORE_PORTAL;
+
+	dpaa2_q = (struct dpaa2_queue *)priv->rx_vq[rx_queue_id];
+
+	if (qbman_fq_query_state(swp, dpaa2_q->fqid, &state) == 0) {
+		frame_cnt = qbman_fq_state_frame_count(&state);
+		RTE_LOG(DEBUG, PMD, "RX frame count for q(%d) is %u\n",
+			rx_queue_id, frame_cnt);
+	}
+	return frame_cnt;
+}
+
 static const uint32_t *
 dpaa2_supported_ptypes_get(struct rte_eth_dev *dev)
 {
@@ -655,7 +662,7 @@ dpaa2_interrupt_handler(void *param)
 		dpaa2_dev_link_update(dev, 0);
 		/* calling all the apps registered for link status event */
 		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC,
-					      NULL, NULL);
+					      NULL);
 	}
 out:
 	ret = dpni_clear_irq_status(dpni, CMD_PRI_LOW, priv->token,
@@ -967,7 +974,8 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	int ret;
 	struct dpaa2_dev_priv *priv = dev->data->dev_private;
 	struct fsl_mc_io *dpni = (struct fsl_mc_io *)priv->hw;
-	uint32_t frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN;
+	uint32_t frame_size = mtu + ETHER_HDR_LEN + ETHER_CRC_LEN
+				+ VLAN_TAG_SIZE;
 
 	PMD_INIT_FUNC_TRACE();
 
@@ -985,11 +993,13 @@ dpaa2_dev_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
 	else
 		dev->data->dev_conf.rxmode.jumbo_frame = 0;
 
+	dev->data->dev_conf.rxmode.max_rx_pkt_len = frame_size;
+
 	/* Set the Max Rx frame length as 'mtu' +
 	 * Maximum Ethernet header length
 	 */
 	ret = dpni_set_max_frame_length(dpni, CMD_PRI_LOW, priv->token,
-					mtu + ETH_VLAN_HLEN);
+					frame_size);
 	if (ret) {
 		PMD_DRV_LOG(ERR, "setting the max frame length failed");
 		return -1;
@@ -1736,6 +1746,7 @@ static struct eth_dev_ops dpaa2_ethdev_ops = {
 	.rx_queue_release  = dpaa2_dev_rx_queue_release,
 	.tx_queue_setup    = dpaa2_dev_tx_queue_setup,
 	.tx_queue_release  = dpaa2_dev_tx_queue_release,
+	.rx_queue_count       = dpaa2_dev_rx_queue_count,
 	.flow_ctrl_get	      = dpaa2_flow_ctrl_get,
 	.flow_ctrl_set	      = dpaa2_flow_ctrl_set,
 	.mac_addr_add         = dpaa2_dev_add_mac_addr,
@@ -1872,7 +1883,6 @@ dpaa2_dev_init(struct rte_eth_dev *eth_dev)
 	}
 
 	eth_dev->dev_ops = &dpaa2_ethdev_ops;
-	eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_LSC;
 
 	eth_dev->rx_pkt_burst = dpaa2_dev_prefetch_rx;
 	eth_dev->tx_pkt_burst = dpaa2_dev_tx;
@@ -1976,6 +1986,9 @@ rte_dpaa2_probe(struct rte_dpaa2_driver *dpaa2_drv,
 	dpaa2_dev->eth_dev = eth_dev;
 	eth_dev->data->rx_mbuf_alloc_failed = 0;
 
+	if (dpaa2_drv->drv_flags & RTE_DPAA2_DRV_INTR_LSC)
+		eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_LSC;
+
 	/* Invoke PMD device initialization function */
 	diag = dpaa2_dev_init(eth_dev);
 	if (diag == 0)
@@ -2003,6 +2016,7 @@ rte_dpaa2_remove(struct rte_dpaa2_device *dpaa2_dev)
 }
 
 static struct rte_dpaa2_driver rte_dpaa2_pmd = {
+	.drv_flags = RTE_DPAA2_DRV_INTR_LSC | RTE_DPAA2_DRV_IOVA_AS_VA,
 	.drv_type = DPAA2_ETH,
 	.probe = rte_dpaa2_probe,
 	.remove = rte_dpaa2_remove,

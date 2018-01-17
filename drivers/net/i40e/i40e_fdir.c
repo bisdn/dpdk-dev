@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2015 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2015 Intel Corporation
  */
 
 #include <sys/queue.h>
@@ -534,7 +505,7 @@ i40e_set_flx_pld_cfg(struct i40e_pf *pf,
 {
 	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
 	struct i40e_fdir_flex_pit flex_pit[I40E_MAX_FLXPLD_FIED];
-	uint32_t flx_pit;
+	uint32_t flx_pit, flx_ort;
 	uint16_t num, min_next_off;  /* in words */
 	uint8_t field_idx = 0;
 	uint8_t layer_idx = 0;
@@ -548,9 +519,17 @@ i40e_set_flx_pld_cfg(struct i40e_pf *pf,
 		layer_idx = I40E_FLXPLD_L4_IDX;
 
 	memset(flex_pit, 0, sizeof(flex_pit));
-	num = i40e_srcoff_to_flx_pit(cfg->src_offset, flex_pit);
+	num = RTE_MIN(i40e_srcoff_to_flx_pit(cfg->src_offset, flex_pit),
+		      RTE_DIM(flex_pit));
 
-	for (i = 0; i < RTE_MIN(num, RTE_DIM(flex_pit)); i++) {
+	if (num) {
+		flx_ort = (1 << I40E_GLQF_ORT_FLX_PAYLOAD_SHIFT) |
+			  (num << I40E_GLQF_ORT_FIELD_CNT_SHIFT) |
+			  (layer_idx * I40E_MAX_FLXPLD_FIED);
+		I40E_WRITE_REG(hw, I40E_GLQF_ORT(33 + layer_idx), flx_ort);
+	}
+
+	for (i = 0; i < num; i++) {
 		field_idx = layer_idx * I40E_MAX_FLXPLD_FIED + i;
 		/* record the info in fdir structure */
 		pf->fdir.flex_set[field_idx].src_offset =

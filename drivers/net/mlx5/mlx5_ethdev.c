@@ -119,33 +119,6 @@ struct ethtool_link_settings {
 #endif
 
 /**
- * Return private structure associated with an Ethernet device.
- *
- * @param dev
- *   Pointer to Ethernet device structure.
- *
- * @return
- *   Pointer to private structure.
- */
-struct priv *
-mlx5_get_priv(struct rte_eth_dev *dev)
-{
-	return dev->data->dev_private;
-}
-
-/**
- * Check if running as a secondary process.
- *
- * @return
- *   Nonzero if running as a secondary process.
- */
-inline int
-mlx5_is_secondary(void)
-{
-	return rte_eal_process_type() == RTE_PROC_SECONDARY;
-}
-
-/**
  * Get interface name from private structure.
  *
  * @param[in] priv
@@ -577,8 +550,26 @@ dev_configure(struct rte_eth_dev *dev)
 	unsigned int j;
 	unsigned int reta_idx_n;
 	const uint8_t use_app_rss_key =
-		!!dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key_len;
+		!!dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key;
+	uint64_t supp_tx_offloads = mlx5_priv_get_tx_port_offloads(priv);
+	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
+	uint64_t supp_rx_offloads =
+		(mlx5_priv_get_rx_port_offloads(priv) |
+		 mlx5_priv_get_rx_queue_offloads(priv));
+	uint64_t rx_offloads = dev->data->dev_conf.rxmode.offloads;
 
+	if ((tx_offloads & supp_tx_offloads) != tx_offloads) {
+		ERROR("Some Tx offloads are not supported "
+		      "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+		      tx_offloads, supp_tx_offloads);
+		return ENOTSUP;
+	}
+	if ((rx_offloads & supp_rx_offloads) != rx_offloads) {
+		ERROR("Some Rx offloads are not supported "
+		      "requested 0x%" PRIx64 " supported 0x%" PRIx64,
+		      rx_offloads, supp_rx_offloads);
+		return ENOTSUP;
+	}
 	if (use_app_rss_key &&
 	    (dev->data->dev_conf.rx_adv_conf.rss_conf.rss_key_len !=
 	     rss_hash_default_key_len)) {
@@ -606,7 +597,7 @@ dev_configure(struct rte_eth_dev *dev)
 		     (void *)dev, priv->txqs_n, txqs_n);
 		priv->txqs_n = txqs_n;
 	}
-	if (rxqs_n > priv->ind_table_max_size) {
+	if (rxqs_n > priv->config.ind_table_max_size) {
 		ERROR("cannot handle this many RX queues (%u)", rxqs_n);
 		return EINVAL;
 	}
@@ -619,7 +610,7 @@ dev_configure(struct rte_eth_dev *dev)
 	 * maximum indirection table size for better balancing.
 	 * The result is always rounded to the next power of two. */
 	reta_idx_n = (1 << log2above((rxqs_n & (rxqs_n - 1)) ?
-				     priv->ind_table_max_size :
+				     priv->config.ind_table_max_size :
 				     rxqs_n));
 	if (priv_rss_reta_index_resize(priv, reta_idx_n))
 		return ENOMEM;
@@ -649,9 +640,6 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 	struct priv *priv = dev->data->dev_private;
 	int ret;
 
-	if (mlx5_is_secondary())
-		return -E_RTE_SECONDARY;
-
 	priv_lock(priv);
 	ret = dev_configure(dev);
 	assert(ret >= 0);
@@ -670,7 +658,8 @@ mlx5_dev_configure(struct rte_eth_dev *dev)
 void
 mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 {
-	struct priv *priv = mlx5_get_priv(dev);
+	struct priv *priv = dev->data->dev_private;
+	struct mlx5_dev_config *config = &priv->config;
 	unsigned int max;
 	char ifname[IF_NAMESIZE];
 
@@ -692,32 +681,15 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 	info->max_rx_queues = max;
 	info->max_tx_queues = max;
 	info->max_mac_addrs = RTE_DIM(priv->mac);
-	info->rx_offload_capa =
-		(priv->hw_csum ?
-		 (DEV_RX_OFFLOAD_IPV4_CKSUM |
-		  DEV_RX_OFFLOAD_UDP_CKSUM |
-		  DEV_RX_OFFLOAD_TCP_CKSUM) :
-		 0) |
-		(priv->hw_vlan_strip ? DEV_RX_OFFLOAD_VLAN_STRIP : 0) |
-		DEV_RX_OFFLOAD_TIMESTAMP;
-
-	if (!priv->mps)
-		info->tx_offload_capa = DEV_TX_OFFLOAD_VLAN_INSERT;
-	if (priv->hw_csum)
-		info->tx_offload_capa |=
-			(DEV_TX_OFFLOAD_IPV4_CKSUM |
-			 DEV_TX_OFFLOAD_UDP_CKSUM |
-			 DEV_TX_OFFLOAD_TCP_CKSUM);
-	if (priv->tso)
-		info->tx_offload_capa |= DEV_TX_OFFLOAD_TCP_TSO;
-	if (priv->tunnel_en)
-		info->tx_offload_capa |= (DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM |
-					  DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
-					  DEV_TX_OFFLOAD_GRE_TNL_TSO);
+	info->rx_queue_offload_capa =
+		mlx5_priv_get_rx_queue_offloads(priv);
+	info->rx_offload_capa = (mlx5_priv_get_rx_port_offloads(priv) |
+				 info->rx_queue_offload_capa);
+	info->tx_offload_capa = mlx5_priv_get_tx_port_offloads(priv);
 	if (priv_get_ifname(priv, &ifname) == 0)
 		info->if_index = if_nametoindex(ifname);
 	info->reta_size = priv->reta_idx_n ?
-		priv->reta_idx_n : priv->ind_table_max_size;
+		priv->reta_idx_n : config->ind_table_max_size;
 	info->hash_key_size = priv->rss_conf.rss_key_len;
 	info->speed_capa = priv->link_speed_capa;
 	priv_unlock(priv);
@@ -761,7 +733,7 @@ mlx5_dev_supported_ptypes_get(struct rte_eth_dev *dev)
 static int
 mlx5_link_update_unlocked_gset(struct rte_eth_dev *dev, int wait_to_complete)
 {
-	struct priv *priv = mlx5_get_priv(dev);
+	struct priv *priv = dev->data->dev_private;
 	struct ethtool_cmd edata = {
 		.cmd = ETHTOOL_GSET /* Deprecated since Linux v4.5. */
 	};
@@ -827,7 +799,7 @@ mlx5_link_update_unlocked_gset(struct rte_eth_dev *dev, int wait_to_complete)
 static int
 mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev, int wait_to_complete)
 {
-	struct priv *priv = mlx5_get_priv(dev);
+	struct priv *priv = dev->data->dev_private;
 	struct ethtool_link_settings gcmd = { .cmd = ETHTOOL_GLINKSETTINGS };
 	struct ifreq ifr;
 	struct rte_eth_link dev_link;
@@ -952,9 +924,6 @@ mlx5_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 	uint16_t kern_mtu;
 	int ret = 0;
 
-	if (mlx5_is_secondary())
-		return -E_RTE_SECONDARY;
-
 	priv_lock(priv);
 	ret = priv_get_mtu(priv, &kern_mtu);
 	if (ret)
@@ -1001,9 +970,6 @@ mlx5_dev_get_flow_ctrl(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 		.cmd = ETHTOOL_GPAUSEPARAM
 	};
 	int ret;
-
-	if (mlx5_is_secondary())
-		return -E_RTE_SECONDARY;
 
 	ifr.ifr_data = (void *)&ethpause;
 	priv_lock(priv);
@@ -1052,9 +1018,6 @@ mlx5_dev_set_flow_ctrl(struct rte_eth_dev *dev, struct rte_eth_fc_conf *fc_conf)
 		.cmd = ETHTOOL_SPAUSEPARAM
 	};
 	int ret;
-
-	if (mlx5_is_secondary())
-		return -E_RTE_SECONDARY;
 
 	ifr.ifr_data = (void *)&ethpause;
 	ethpause.autoneg = fc_conf->autoneg;
@@ -1224,14 +1187,17 @@ mlx5_dev_link_status_handler(void *arg)
 	struct priv *priv = dev->data->dev_private;
 	int ret;
 
-	priv_lock(priv);
-	assert(priv->pending_alarm == 1);
+	while (!priv_trylock(priv)) {
+		/* Alarm is being canceled. */
+		if (priv->pending_alarm == 0)
+			return;
+		rte_pause();
+	}
 	priv->pending_alarm = 0;
 	ret = priv_link_status_update(priv);
 	priv_unlock(priv);
 	if (!ret)
-		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL,
-					      NULL);
+		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL);
 }
 
 /**
@@ -1253,11 +1219,9 @@ mlx5_dev_interrupt_handler(void *cb_arg)
 	events = priv_dev_status_handler(priv);
 	priv_unlock(priv);
 	if (events & (1 << RTE_ETH_EVENT_INTR_LSC))
-		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL,
-					      NULL);
+		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_LSC, NULL);
 	if (events & (1 << RTE_ETH_EVENT_INTR_RMV))
-		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_RMV, NULL,
-					      NULL);
+		_rte_eth_dev_callback_process(dev, RTE_ETH_EVENT_INTR_RMV, NULL);
 }
 
 /**
@@ -1295,9 +1259,10 @@ priv_dev_interrupt_handler_uninstall(struct priv *priv, struct rte_eth_dev *dev)
 	if (priv->primary_socket)
 		rte_intr_callback_unregister(&priv->intr_handle_socket,
 					     mlx5_dev_handler_socket, dev);
-	if (priv->pending_alarm)
+	if (priv->pending_alarm) {
+		priv->pending_alarm = 0;
 		rte_eal_alarm_cancel(mlx5_dev_link_status_handler, dev);
-	priv->pending_alarm = 0;
+	}
 	priv->intr_handle.fd = 0;
 	priv->intr_handle.type = RTE_INTR_HANDLE_UNKNOWN;
 	priv->intr_handle_socket.fd = 0;
@@ -1317,7 +1282,6 @@ priv_dev_interrupt_handler_install(struct priv *priv, struct rte_eth_dev *dev)
 {
 	int rc, flags;
 
-	assert(!mlx5_is_secondary());
 	assert(priv->ctx->async_fd > 0);
 	flags = fcntl(priv->ctx->async_fd, F_GETFL);
 	rc = fcntl(priv->ctx->async_fd, F_SETFL, flags | O_NONBLOCK);
@@ -1365,8 +1329,8 @@ priv_dev_set_link(struct priv *priv, struct rte_eth_dev *dev, int up)
 		err = priv_set_flags(priv, ~IFF_UP, IFF_UP);
 		if (err)
 			return err;
-		priv_dev_select_tx_function(priv, dev);
-		priv_dev_select_rx_function(priv, dev);
+		dev->tx_pkt_burst = priv_select_tx_function(priv, dev);
+		dev->rx_pkt_burst = priv_select_rx_function(priv, dev);
 	} else {
 		err = priv_set_flags(priv, ~IFF_UP, ~IFF_UP);
 		if (err)
@@ -1426,32 +1390,44 @@ mlx5_set_link_up(struct rte_eth_dev *dev)
  *   Pointer to private data structure.
  * @param dev
  *   Pointer to rte_eth_dev structure.
+ *
+ * @return
+ *   Pointer to selected Tx burst function.
  */
-void
-priv_dev_select_tx_function(struct priv *priv, struct rte_eth_dev *dev)
+eth_tx_burst_t
+priv_select_tx_function(struct priv *priv, struct rte_eth_dev *dev)
 {
+	eth_tx_burst_t tx_pkt_burst = mlx5_tx_burst;
+	struct mlx5_dev_config *config = &priv->config;
+	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
+	int tso = !!(tx_offloads & (DEV_TX_OFFLOAD_TCP_TSO |
+				    DEV_TX_OFFLOAD_VXLAN_TNL_TSO |
+				    DEV_TX_OFFLOAD_GRE_TNL_TSO));
+	int vlan_insert = !!(tx_offloads & DEV_TX_OFFLOAD_VLAN_INSERT);
+
 	assert(priv != NULL);
-	assert(dev != NULL);
-	dev->tx_pkt_burst = mlx5_tx_burst;
 	/* Select appropriate TX function. */
-	if (priv->mps == MLX5_MPW_ENHANCED) {
-		if (priv_check_vec_tx_support(priv) > 0) {
-			if (priv_check_raw_vec_tx_support(priv) > 0)
-				dev->tx_pkt_burst = mlx5_tx_burst_raw_vec;
+	if (vlan_insert || tso)
+		return tx_pkt_burst;
+	if (config->mps == MLX5_MPW_ENHANCED) {
+		if (priv_check_vec_tx_support(priv, dev) > 0) {
+			if (priv_check_raw_vec_tx_support(priv, dev) > 0)
+				tx_pkt_burst = mlx5_tx_burst_raw_vec;
 			else
-				dev->tx_pkt_burst = mlx5_tx_burst_vec;
+				tx_pkt_burst = mlx5_tx_burst_vec;
 			DEBUG("selected Enhanced MPW TX vectorized function");
 		} else {
-			dev->tx_pkt_burst = mlx5_tx_burst_empw;
+			tx_pkt_burst = mlx5_tx_burst_empw;
 			DEBUG("selected Enhanced MPW TX function");
 		}
-	} else if (priv->mps && priv->txq_inline) {
-		dev->tx_pkt_burst = mlx5_tx_burst_mpw_inline;
+	} else if (config->mps && (config->txq_inline > 0)) {
+		tx_pkt_burst = mlx5_tx_burst_mpw_inline;
 		DEBUG("selected MPW inline TX function");
-	} else if (priv->mps) {
-		dev->tx_pkt_burst = mlx5_tx_burst_mpw;
+	} else if (config->mps) {
+		tx_pkt_burst = mlx5_tx_burst_mpw;
 		DEBUG("selected MPW TX function");
 	}
+	return tx_pkt_burst;
 }
 
 /**
@@ -1461,16 +1437,19 @@ priv_dev_select_tx_function(struct priv *priv, struct rte_eth_dev *dev)
  *   Pointer to private data structure.
  * @param dev
  *   Pointer to rte_eth_dev structure.
+ *
+ * @return
+ *   Pointer to selected Rx burst function.
  */
-void
-priv_dev_select_rx_function(struct priv *priv, struct rte_eth_dev *dev)
+eth_rx_burst_t
+priv_select_rx_function(struct priv *priv, __rte_unused struct rte_eth_dev *dev)
 {
+	eth_rx_burst_t rx_pkt_burst = mlx5_rx_burst;
+
 	assert(priv != NULL);
-	assert(dev != NULL);
 	if (priv_check_vec_rx_support(priv) > 0) {
-		dev->rx_pkt_burst = mlx5_rx_burst_vec;
+		rx_pkt_burst = mlx5_rx_burst_vec;
 		DEBUG("selected RX vectorized function");
-	} else {
-		dev->rx_pkt_burst = mlx5_rx_burst;
 	}
+	return rx_pkt_burst;
 }

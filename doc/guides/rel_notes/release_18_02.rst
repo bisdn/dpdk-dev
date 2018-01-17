@@ -41,6 +41,64 @@ New Features
      Also, make sure to start the actual text at the margin.
      =========================================================
 
+* **Added the ixgbe ethernet driver to support RSS with flow API.**
+
+  Rte_flow actually defined to include RSS, but till now, RSS is out of
+  rte_flow. This patch is to support igb and ixgbe NIC with existing RSS
+  configuration using rte_flow API.
+
+* **Add MAC loopback support for i40e.**
+
+  Add MAC loopback support for i40e in order to support test task asked by
+  users. According to the device configuration, it will setup TX->RX loopback
+  link or not.
+
+* **Add the support of run time determination of number of queues per i40e VF**
+
+  The number of queue per VF is determined by its host PF. If the PCI address
+  of an i40e PF is aaaa:bb.cc, the number of queues per VF can be configured
+  with EAL parameter like -w aaaa:bb.cc,queue-num-per-vf=n. The value n can be
+  1, 2, 4, 8 or 16. If no such parameter is configured, the number of queues
+  per VF is 4 by default.
+
+* **Added the i40e ethernet driver to support RSS with flow API.**
+
+  Rte_flow actually defined to include RSS, but till now, RSS is out of
+  rte_flow. This patch is to support i40e NIC with existing RSS
+  configuration using rte_flow API.It also enable queue region configuration
+  using flow API for i40e.
+
+* **Added NVGRE and UDP tunnels support in Solarflare network PMD.**
+
+  Added support for NVGRE, VXLAN and GENEVE tunnels.
+
+  * Added support for UDP tunnel ports configuration.
+  * Added tunneled packets classification.
+  * Added inner checksum offload.
+
+* **Added the igb ethernet driver to support RSS with flow API.**
+
+  Rte_flow actually defined to include RSS, but till now, RSS is out of
+  rte_flow. This patch is to support igb NIC with existing RSS configuration
+  using rte_flow API.
+
+* **Add AVF (Adaptive Virtual Function) net PMD.**
+
+  A new net PMD has been added, which supports Intel® Ethernet Adaptive
+  Virtual Function (AVF) with features list below:
+
+  * Basic Rx/Tx burst
+  * SSE vectorized Rx/Tx burst
+  * Promiscuous mode
+  * MAC/VLAN offload
+  * Checksum offload
+  * TSO offload
+  * Jumbo frame and MTU setting
+  * RSS configuration
+  * stats
+  * Rx/Tx descriptor status
+  * Link status update/event
+
 
 API Changes
 -----------

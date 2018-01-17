@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2017 Intel Corporation
  */
 
 #include <sys/types.h>
@@ -93,6 +64,7 @@ static const struct rte_eth_xstats_name_off rte_stats_strings[] = {
 	{"tx_good_packets", offsetof(struct rte_eth_stats, opackets)},
 	{"rx_good_bytes", offsetof(struct rte_eth_stats, ibytes)},
 	{"tx_good_bytes", offsetof(struct rte_eth_stats, obytes)},
+	{"rx_missed_errors", offsetof(struct rte_eth_stats, imissed)},
 	{"rx_errors", offsetof(struct rte_eth_stats, ierrors)},
 	{"tx_errors", offsetof(struct rte_eth_stats, oerrors)},
 	{"rx_mbuf_allocation_errors", offsetof(struct rte_eth_stats,
@@ -204,7 +176,6 @@ eth_dev_get(uint16_t port_id)
 
 	eth_dev->data = &rte_eth_dev_data[port_id];
 	eth_dev->state = RTE_ETH_DEV_ATTACHED;
-	TAILQ_INIT(&(eth_dev->link_intr_cbs));
 
 	eth_dev_last_created_port = port_id;
 
@@ -237,6 +208,8 @@ rte_eth_dev_allocate(const char *name)
 	snprintf(eth_dev->data->name, sizeof(eth_dev->data->name), "%s", name);
 	eth_dev->data->port_id = port_id;
 	eth_dev->data->mtu = ETHER_MTU;
+
+	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_NEW, NULL);
 
 	return eth_dev;
 }
@@ -279,6 +252,9 @@ rte_eth_dev_release_port(struct rte_eth_dev *eth_dev)
 		return -EINVAL;
 
 	eth_dev->state = RTE_ETH_DEV_UNUSED;
+
+	_rte_eth_dev_callback_process(eth_dev, RTE_ETH_EVENT_DESTROY, NULL);
+
 	return 0;
 }
 
@@ -437,7 +413,7 @@ rte_eth_dev_detach(uint16_t port_id, char *name)
 	if (ret < 0)
 		goto err;
 
-	rte_eth_devices[port_id].state = RTE_ETH_DEV_UNUSED;
+	rte_eth_dev_release_port(&rte_eth_devices[port_id]);
 	return 0;
 
 err:
@@ -810,7 +786,7 @@ rte_eth_dev_configure(uint16_t port_id, uint16_t nb_rx_q, uint16_t nb_tx_q,
 	 * Convert between the offloads API to enable PMDs to support
 	 * only one of them.
 	 */
-	if ((dev_conf->rxmode.ignore_offload_bitfield == 0)) {
+	if (dev_conf->rxmode.ignore_offload_bitfield == 0) {
 		rte_eth_convert_rx_offload_bitfield(
 				&dev_conf->rxmode, &local_conf.rxmode.offloads);
 	} else {
@@ -1641,6 +1617,45 @@ rte_eth_xstats_get_id_by_name(uint16_t port_id, const char *xstat_name,
 	return -EINVAL;
 }
 
+/* retrieve basic stats names */
+static int
+rte_eth_basic_stats_get_names(struct rte_eth_dev *dev,
+	struct rte_eth_xstat_name *xstats_names)
+{
+	int cnt_used_entries = 0;
+	uint32_t idx, id_queue;
+	uint16_t num_q;
+
+	for (idx = 0; idx < RTE_NB_STATS; idx++) {
+		snprintf(xstats_names[cnt_used_entries].name,
+			sizeof(xstats_names[0].name),
+			"%s", rte_stats_strings[idx].name);
+		cnt_used_entries++;
+	}
+	num_q = RTE_MIN(dev->data->nb_rx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
+	for (id_queue = 0; id_queue < num_q; id_queue++) {
+		for (idx = 0; idx < RTE_NB_RXQ_STATS; idx++) {
+			snprintf(xstats_names[cnt_used_entries].name,
+				sizeof(xstats_names[0].name),
+				"rx_q%u%s",
+				id_queue, rte_rxq_stats_strings[idx].name);
+			cnt_used_entries++;
+		}
+
+	}
+	num_q = RTE_MIN(dev->data->nb_tx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
+	for (id_queue = 0; id_queue < num_q; id_queue++) {
+		for (idx = 0; idx < RTE_NB_TXQ_STATS; idx++) {
+			snprintf(xstats_names[cnt_used_entries].name,
+				sizeof(xstats_names[0].name),
+				"tx_q%u%s",
+				id_queue, rte_txq_stats_strings[idx].name);
+			cnt_used_entries++;
+		}
+	}
+	return cnt_used_entries;
+}
+
 /* retrieve ethdev extended statistics names */
 int
 rte_eth_xstats_get_names_by_id(uint16_t port_id,
@@ -1649,7 +1664,9 @@ rte_eth_xstats_get_names_by_id(uint16_t port_id,
 {
 	struct rte_eth_xstat_name *xstats_names_copy;
 	unsigned int no_basic_stat_requested = 1;
+	unsigned int no_ext_stat_requested = 1;
 	unsigned int expected_entries;
+	unsigned int basic_count;
 	struct rte_eth_dev *dev;
 	unsigned int i;
 	int ret;
@@ -1657,6 +1674,7 @@ rte_eth_xstats_get_names_by_id(uint16_t port_id,
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
+	basic_count = get_xstats_basic_count(dev);
 	ret = get_xstats_count(port_id);
 	if (ret < 0)
 		return ret;
@@ -1674,7 +1692,6 @@ rte_eth_xstats_get_names_by_id(uint16_t port_id,
 		return -EINVAL;
 
 	if (ids && dev->dev_ops->xstats_get_names_by_id != NULL && size > 0) {
-		unsigned int basic_count = get_xstats_basic_count(dev);
 		uint64_t ids_copy[size];
 
 		for (i = 0; i < size; i++) {
@@ -1713,8 +1730,22 @@ rte_eth_xstats_get_names_by_id(uint16_t port_id,
 		return -ENOMEM;
 	}
 
+	if (ids) {
+		for (i = 0; i < size; i++) {
+			if (ids[i] > basic_count) {
+				no_ext_stat_requested = 0;
+				break;
+			}
+		}
+	}
+
 	/* Fill xstats_names_copy structure */
-	rte_eth_xstats_get_names(port_id, xstats_names_copy, expected_entries);
+	if (ids && no_ext_stat_requested) {
+		rte_eth_basic_stats_get_names(dev, xstats_names_copy);
+	} else {
+		rte_eth_xstats_get_names(port_id, xstats_names_copy,
+			expected_entries);
+	}
 
 	/* Filter stats */
 	for (i = 0; i < size; i++) {
@@ -1739,8 +1770,6 @@ rte_eth_xstats_get_names(uint16_t port_id,
 	int cnt_used_entries;
 	int cnt_expected_entries;
 	int cnt_driver_entries;
-	uint32_t idx, id_queue;
-	uint16_t num_q;
 
 	cnt_expected_entries = get_xstats_count(port_id);
 	if (xstats_names == NULL || cnt_expected_entries < 0 ||
@@ -1749,35 +1778,9 @@ rte_eth_xstats_get_names(uint16_t port_id,
 
 	/* port_id checked in get_xstats_count() */
 	dev = &rte_eth_devices[port_id];
-	cnt_used_entries = 0;
 
-	for (idx = 0; idx < RTE_NB_STATS; idx++) {
-		snprintf(xstats_names[cnt_used_entries].name,
-			sizeof(xstats_names[0].name),
-			"%s", rte_stats_strings[idx].name);
-		cnt_used_entries++;
-	}
-	num_q = RTE_MIN(dev->data->nb_rx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
-	for (id_queue = 0; id_queue < num_q; id_queue++) {
-		for (idx = 0; idx < RTE_NB_RXQ_STATS; idx++) {
-			snprintf(xstats_names[cnt_used_entries].name,
-				sizeof(xstats_names[0].name),
-				"rx_q%u%s",
-				id_queue, rte_rxq_stats_strings[idx].name);
-			cnt_used_entries++;
-		}
-
-	}
-	num_q = RTE_MIN(dev->data->nb_tx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
-	for (id_queue = 0; id_queue < num_q; id_queue++) {
-		for (idx = 0; idx < RTE_NB_TXQ_STATS; idx++) {
-			snprintf(xstats_names[cnt_used_entries].name,
-				sizeof(xstats_names[0].name),
-				"tx_q%u%s",
-				id_queue, rte_txq_stats_strings[idx].name);
-			cnt_used_entries++;
-		}
-	}
+	cnt_used_entries = rte_eth_basic_stats_get_names(
+		dev, xstats_names);
 
 	if (dev->dev_ops->xstats_get_names != NULL) {
 		/* If there are any driver-specific xstats, append them
@@ -1795,13 +1798,63 @@ rte_eth_xstats_get_names(uint16_t port_id,
 	return cnt_used_entries;
 }
 
+
+static int
+rte_eth_basic_stats_get(uint16_t port_id, struct rte_eth_xstat *xstats)
+{
+	struct rte_eth_dev *dev;
+	struct rte_eth_stats eth_stats;
+	unsigned int count = 0, i, q;
+	uint64_t val, *stats_ptr;
+	uint16_t nb_rxqs, nb_txqs;
+
+	rte_eth_stats_get(port_id, &eth_stats);
+	dev = &rte_eth_devices[port_id];
+
+	nb_rxqs = RTE_MIN(dev->data->nb_rx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
+	nb_txqs = RTE_MIN(dev->data->nb_tx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
+
+	/* global stats */
+	for (i = 0; i < RTE_NB_STATS; i++) {
+		stats_ptr = RTE_PTR_ADD(&eth_stats,
+					rte_stats_strings[i].offset);
+		val = *stats_ptr;
+		xstats[count++].value = val;
+	}
+
+	/* per-rxq stats */
+	for (q = 0; q < nb_rxqs; q++) {
+		for (i = 0; i < RTE_NB_RXQ_STATS; i++) {
+			stats_ptr = RTE_PTR_ADD(&eth_stats,
+					rte_rxq_stats_strings[i].offset +
+					q * sizeof(uint64_t));
+			val = *stats_ptr;
+			xstats[count++].value = val;
+		}
+	}
+
+	/* per-txq stats */
+	for (q = 0; q < nb_txqs; q++) {
+		for (i = 0; i < RTE_NB_TXQ_STATS; i++) {
+			stats_ptr = RTE_PTR_ADD(&eth_stats,
+					rte_txq_stats_strings[i].offset +
+					q * sizeof(uint64_t));
+			val = *stats_ptr;
+			xstats[count++].value = val;
+		}
+	}
+	return count;
+}
+
 /* retrieve ethdev extended statistics */
 int
 rte_eth_xstats_get_by_id(uint16_t port_id, const uint64_t *ids,
 			 uint64_t *values, unsigned int size)
 {
 	unsigned int no_basic_stat_requested = 1;
+	unsigned int no_ext_stat_requested = 1;
 	unsigned int num_xstats_filled;
+	unsigned int basic_count;
 	uint16_t expected_entries;
 	struct rte_eth_dev *dev;
 	unsigned int i;
@@ -1811,6 +1864,7 @@ rte_eth_xstats_get_by_id(uint16_t port_id, const uint64_t *ids,
 	expected_entries = get_xstats_count(port_id);
 	struct rte_eth_xstat xstats[expected_entries];
 	dev = &rte_eth_devices[port_id];
+	basic_count = get_xstats_basic_count(dev);
 
 	/* Return max number of stats if no ids given */
 	if (!ids) {
@@ -1845,8 +1899,21 @@ rte_eth_xstats_get_by_id(uint16_t port_id, const uint64_t *ids,
 					values, size);
 	}
 
+	if (ids) {
+		for (i = 0; i < size; i++) {
+			if (ids[i] > basic_count) {
+				no_ext_stat_requested = 0;
+				break;
+			}
+		}
+	}
+
 	/* Fill the xstats structure */
-	ret = rte_eth_xstats_get(port_id, xstats, expected_entries);
+	if (ids && no_ext_stat_requested)
+		ret = rte_eth_basic_stats_get(port_id, xstats);
+	else
+		ret = rte_eth_xstats_get(port_id, xstats, expected_entries);
+
 	if (ret < 0)
 		return ret;
 	num_xstats_filled = (unsigned int)ret;
@@ -1873,11 +1940,9 @@ int
 rte_eth_xstats_get(uint16_t port_id, struct rte_eth_xstat *xstats,
 	unsigned int n)
 {
-	struct rte_eth_stats eth_stats;
 	struct rte_eth_dev *dev;
-	unsigned int count = 0, i, q;
+	unsigned int count = 0, i;
 	signed int xcount = 0;
-	uint64_t val, *stats_ptr;
 	uint16_t nb_rxqs, nb_txqs;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
@@ -1908,38 +1973,7 @@ rte_eth_xstats_get(uint16_t port_id, struct rte_eth_xstat *xstats,
 		return count + xcount;
 
 	/* now fill the xstats structure */
-	count = 0;
-	rte_eth_stats_get(port_id, &eth_stats);
-
-	/* global stats */
-	for (i = 0; i < RTE_NB_STATS; i++) {
-		stats_ptr = RTE_PTR_ADD(&eth_stats,
-					rte_stats_strings[i].offset);
-		val = *stats_ptr;
-		xstats[count++].value = val;
-	}
-
-	/* per-rxq stats */
-	for (q = 0; q < nb_rxqs; q++) {
-		for (i = 0; i < RTE_NB_RXQ_STATS; i++) {
-			stats_ptr = RTE_PTR_ADD(&eth_stats,
-					rte_rxq_stats_strings[i].offset +
-					q * sizeof(uint64_t));
-			val = *stats_ptr;
-			xstats[count++].value = val;
-		}
-	}
-
-	/* per-txq stats */
-	for (q = 0; q < nb_txqs; q++) {
-		for (i = 0; i < RTE_NB_TXQ_STATS; i++) {
-			stats_ptr = RTE_PTR_ADD(&eth_stats,
-					rte_txq_stats_strings[i].offset +
-					q * sizeof(uint64_t));
-			val = *stats_ptr;
-			xstats[count++].value = val;
-		}
-	}
+	count = rte_eth_basic_stats_get(port_id, xstats);
 
 	for (i = 0; i < count; i++)
 		xstats[i].id = i;
@@ -2693,7 +2727,7 @@ rte_eth_dev_uc_hash_table_set(uint16_t port_id, struct ether_addr *addr,
 
 	index = get_hash_mac_addr_index(port_id, addr);
 	/* Check if it's already there, and do nothing */
-	if ((index >= 0) && (on))
+	if ((index >= 0) && on)
 		return 0;
 
 	if (index < 0) {
@@ -2820,6 +2854,14 @@ rte_eth_mirror_rule_reset(uint16_t port_id, uint8_t rule_id)
 	return (*dev->dev_ops->mirror_rule_reset)(dev, rule_id);
 }
 
+RTE_INIT(eth_dev_init_cb_lists)
+{
+	int i;
+
+	for (i = 0; i < RTE_MAX_ETHPORTS; i++)
+		TAILQ_INIT(&rte_eth_devices[i].link_intr_cbs);
+}
+
 int
 rte_eth_dev_callback_register(uint16_t port_id,
 			enum rte_eth_event_type event,
@@ -2827,37 +2869,59 @@ rte_eth_dev_callback_register(uint16_t port_id,
 {
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_callback *user_cb;
+	uint32_t next_port; /* size is 32-bit to prevent loop wrap-around */
+	uint16_t last_port;
 
 	if (!cb_fn)
 		return -EINVAL;
 
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
+	if (!rte_eth_dev_is_valid_port(port_id) && port_id != RTE_ETH_ALL) {
+		RTE_LOG(ERR, EAL, "Invalid port_id=%d\n", port_id);
+		return -EINVAL;
+	}
 
-	dev = &rte_eth_devices[port_id];
+	if (port_id == RTE_ETH_ALL) {
+		next_port = 0;
+		last_port = RTE_MAX_ETHPORTS - 1;
+	} else {
+		next_port = last_port = port_id;
+	}
+
 	rte_spinlock_lock(&rte_eth_dev_cb_lock);
 
-	TAILQ_FOREACH(user_cb, &(dev->link_intr_cbs), next) {
-		if (user_cb->cb_fn == cb_fn &&
-			user_cb->cb_arg == cb_arg &&
-			user_cb->event == event) {
-			break;
-		}
-	}
+	do {
+		dev = &rte_eth_devices[next_port];
 
-	/* create a new callback. */
-	if (user_cb == NULL) {
-		user_cb = rte_zmalloc("INTR_USER_CALLBACK",
-					sizeof(struct rte_eth_dev_callback), 0);
-		if (user_cb != NULL) {
-			user_cb->cb_fn = cb_fn;
-			user_cb->cb_arg = cb_arg;
-			user_cb->event = event;
-			TAILQ_INSERT_TAIL(&(dev->link_intr_cbs), user_cb, next);
+		TAILQ_FOREACH(user_cb, &(dev->link_intr_cbs), next) {
+			if (user_cb->cb_fn == cb_fn &&
+				user_cb->cb_arg == cb_arg &&
+				user_cb->event == event) {
+				break;
+			}
 		}
-	}
+
+		/* create a new callback. */
+		if (user_cb == NULL) {
+			user_cb = rte_zmalloc("INTR_USER_CALLBACK",
+				sizeof(struct rte_eth_dev_callback), 0);
+			if (user_cb != NULL) {
+				user_cb->cb_fn = cb_fn;
+				user_cb->cb_arg = cb_arg;
+				user_cb->event = event;
+				TAILQ_INSERT_TAIL(&(dev->link_intr_cbs),
+						  user_cb, next);
+			} else {
+				rte_spinlock_unlock(&rte_eth_dev_cb_lock);
+				rte_eth_dev_callback_unregister(port_id, event,
+								cb_fn, cb_arg);
+				return -ENOMEM;
+			}
+
+		}
+	} while (++next_port <= last_port);
 
 	rte_spinlock_unlock(&rte_eth_dev_cb_lock);
-	return (user_cb == NULL) ? -ENOMEM : 0;
+	return 0;
 }
 
 int
@@ -2868,36 +2932,50 @@ rte_eth_dev_callback_unregister(uint16_t port_id,
 	int ret;
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_callback *cb, *next;
+	uint32_t next_port; /* size is 32-bit to prevent loop wrap-around */
+	uint16_t last_port;
 
 	if (!cb_fn)
 		return -EINVAL;
 
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -EINVAL);
+	if (!rte_eth_dev_is_valid_port(port_id) && port_id != RTE_ETH_ALL) {
+		RTE_LOG(ERR, EAL, "Invalid port_id=%d\n", port_id);
+		return -EINVAL;
+	}
 
-	dev = &rte_eth_devices[port_id];
+	if (port_id == RTE_ETH_ALL) {
+		next_port = 0;
+		last_port = RTE_MAX_ETHPORTS - 1;
+	} else {
+		next_port = last_port = port_id;
+	}
+
 	rte_spinlock_lock(&rte_eth_dev_cb_lock);
 
-	ret = 0;
-	for (cb = TAILQ_FIRST(&dev->link_intr_cbs); cb != NULL; cb = next) {
+	do {
+		dev = &rte_eth_devices[next_port];
+		ret = 0;
+		for (cb = TAILQ_FIRST(&dev->link_intr_cbs); cb != NULL;
+		     cb = next) {
 
-		next = TAILQ_NEXT(cb, next);
+			next = TAILQ_NEXT(cb, next);
 
-		if (cb->cb_fn != cb_fn || cb->event != event ||
-				(cb->cb_arg != (void *)-1 &&
-				cb->cb_arg != cb_arg))
-			continue;
+			if (cb->cb_fn != cb_fn || cb->event != event ||
+			    (cb->cb_arg != (void *)-1 && cb->cb_arg != cb_arg))
+				continue;
 
-		/*
-		 * if this callback is not executing right now,
-		 * then remove it.
-		 */
-		if (cb->active == 0) {
-			TAILQ_REMOVE(&(dev->link_intr_cbs), cb, next);
-			rte_free(cb);
-		} else {
-			ret = -EAGAIN;
+			/*
+			 * if this callback is not executing right now,
+			 * then remove it.
+			 */
+			if (cb->active == 0) {
+				TAILQ_REMOVE(&(dev->link_intr_cbs), cb, next);
+				rte_free(cb);
+			} else {
+				ret = -EAGAIN;
+			}
 		}
-	}
+	} while (++next_port <= last_port);
 
 	rte_spinlock_unlock(&rte_eth_dev_cb_lock);
 	return ret;
@@ -2905,7 +2983,7 @@ rte_eth_dev_callback_unregister(uint16_t port_id,
 
 int
 _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
-	enum rte_eth_event_type event, void *cb_arg, void *ret_param)
+	enum rte_eth_event_type event, void *ret_param)
 {
 	struct rte_eth_dev_callback *cb_lst;
 	struct rte_eth_dev_callback dev_cb;
@@ -2917,8 +2995,6 @@ _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
 			continue;
 		dev_cb = *cb_lst;
 		cb_lst->active = 1;
-		if (cb_arg != NULL)
-			dev_cb.cb_arg = cb_arg;
 		if (ret_param != NULL)
 			dev_cb.ret_param = ret_param;
 

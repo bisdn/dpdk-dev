@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2014 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2014 Intel Corporation
  */
 
 #include <stdio.h>
@@ -44,8 +15,8 @@
 #include <rte_memcpy.h>
 #include <rte_atomic.h>
 
-#include "rte_power_acpi_cpufreq.h"
-#include "rte_power_common.h"
+#include "power_acpi_cpufreq.h"
+#include "power_common.h"
 
 #ifdef RTE_LIBRTE_POWER_DEBUG
 #define POWER_DEBUG_TRACE(fmt, args...) do { \
@@ -106,7 +77,7 @@ enum power_state {
  * Power info per lcore.
  */
 struct rte_power_info {
-	unsigned lcore_id;                   /**< Logical core id */
+	unsigned int lcore_id;                   /**< Logical core id */
 	uint32_t freqs[RTE_MAX_LCORE_FREQS]; /**< Frequency array */
 	uint32_t nb_freqs;                   /**< number of available freqs */
 	FILE *f;                             /**< FD of scaling_setspeed */
@@ -311,7 +282,7 @@ out:
 }
 
 int
-rte_power_acpi_cpufreq_init(unsigned lcore_id)
+power_acpi_cpufreq_init(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -352,7 +323,7 @@ rte_power_acpi_cpufreq_init(unsigned lcore_id)
 	}
 
 	/* Set freq to max by default */
-	if (rte_power_acpi_cpufreq_freq_max(lcore_id) < 0) {
+	if (power_acpi_cpufreq_freq_max(lcore_id) < 0) {
 		RTE_LOG(ERR, POWER, "Cannot set frequency of lcore %u "
 				"to max\n", lcore_id);
 		goto fail;
@@ -372,7 +343,7 @@ fail:
 
 /**
  * It is to check the governor and then set the original governor back if
- * needed by writing the the sys file.
+ * needed by writing the sys file.
  */
 static int
 power_set_governor_original(struct rte_power_info *pi)
@@ -419,7 +390,7 @@ out:
 }
 
 int
-rte_power_acpi_cpufreq_exit(unsigned lcore_id)
+power_acpi_cpufreq_exit(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -461,7 +432,7 @@ fail:
 }
 
 uint32_t
-rte_power_acpi_cpufreq_freqs(unsigned lcore_id, uint32_t *freqs, uint32_t num)
+power_acpi_cpufreq_freqs(unsigned int lcore_id, uint32_t *freqs, uint32_t num)
 {
 	struct rte_power_info *pi;
 
@@ -481,7 +452,7 @@ rte_power_acpi_cpufreq_freqs(unsigned lcore_id, uint32_t *freqs, uint32_t num)
 }
 
 uint32_t
-rte_power_acpi_cpufreq_get_freq(unsigned lcore_id)
+power_acpi_cpufreq_get_freq(unsigned int lcore_id)
 {
 	if (lcore_id >= RTE_MAX_LCORE) {
 		RTE_LOG(ERR, POWER, "Invalid lcore ID\n");
@@ -492,7 +463,7 @@ rte_power_acpi_cpufreq_get_freq(unsigned lcore_id)
 }
 
 int
-rte_power_acpi_cpufreq_set_freq(unsigned lcore_id, uint32_t index)
+power_acpi_cpufreq_set_freq(unsigned int lcore_id, uint32_t index)
 {
 	if (lcore_id >= RTE_MAX_LCORE) {
 		RTE_LOG(ERR, POWER, "Invalid lcore ID\n");
@@ -503,7 +474,7 @@ rte_power_acpi_cpufreq_set_freq(unsigned lcore_id, uint32_t index)
 }
 
 int
-rte_power_acpi_cpufreq_freq_down(unsigned lcore_id)
+power_acpi_cpufreq_freq_down(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -521,7 +492,7 @@ rte_power_acpi_cpufreq_freq_down(unsigned lcore_id)
 }
 
 int
-rte_power_acpi_cpufreq_freq_up(unsigned lcore_id)
+power_acpi_cpufreq_freq_up(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -539,7 +510,7 @@ rte_power_acpi_cpufreq_freq_up(unsigned lcore_id)
 }
 
 int
-rte_power_acpi_cpufreq_freq_max(unsigned lcore_id)
+power_acpi_cpufreq_freq_max(unsigned int lcore_id)
 {
 	if (lcore_id >= RTE_MAX_LCORE) {
 		RTE_LOG(ERR, POWER, "Invalid lcore ID\n");
@@ -561,7 +532,7 @@ rte_power_acpi_cpufreq_freq_max(unsigned lcore_id)
 }
 
 int
-rte_power_acpi_cpufreq_freq_min(unsigned lcore_id)
+power_acpi_cpufreq_freq_min(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -578,7 +549,7 @@ rte_power_acpi_cpufreq_freq_min(unsigned lcore_id)
 
 
 int
-rte_power_acpi_turbo_status(unsigned int lcore_id)
+power_acpi_turbo_status(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -594,7 +565,7 @@ rte_power_acpi_turbo_status(unsigned int lcore_id)
 
 
 int
-rte_power_acpi_enable_turbo(unsigned int lcore_id)
+power_acpi_enable_turbo(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -616,7 +587,7 @@ rte_power_acpi_enable_turbo(unsigned int lcore_id)
 	}
 
 	/* Max may have changed, so call to max function */
-	if (rte_power_acpi_cpufreq_freq_max(lcore_id) < 0) {
+	if (power_acpi_cpufreq_freq_max(lcore_id) < 0) {
 		RTE_LOG(ERR, POWER,
 			"Failed to set frequency of lcore %u to max\n",
 			lcore_id);
@@ -627,7 +598,7 @@ rte_power_acpi_enable_turbo(unsigned int lcore_id)
 }
 
 int
-rte_power_acpi_disable_turbo(unsigned int lcore_id)
+power_acpi_disable_turbo(unsigned int lcore_id)
 {
 	struct rte_power_info *pi;
 
@@ -642,7 +613,7 @@ rte_power_acpi_disable_turbo(unsigned int lcore_id)
 
 	if ((pi->turbo_available) && (pi->curr_idx <= 1)) {
 		/* Try to set freq to max by default coming out of turbo */
-		if (rte_power_acpi_cpufreq_freq_max(lcore_id) < 0) {
+		if (power_acpi_cpufreq_freq_max(lcore_id) < 0) {
 			RTE_LOG(ERR, POWER,
 				"Failed to set frequency of lcore %u to max\n",
 				lcore_id);

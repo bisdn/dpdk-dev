@@ -1,32 +1,10 @@
-/*-
- *   BSD LICENSE
+/* SPDX-License-Identifier: BSD-3-Clause
  *
- * Copyright (c) 2016-2017 Solarflare Communications Inc.
+ * Copyright (c) 2016-2018 Solarflare Communications Inc.
  * All rights reserved.
  *
  * This software was jointly developed between OKTET Labs (under contract
  * for Solarflare) and Solarflare Communications, Inc.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
- * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
- * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
- * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <rte_mempool.h>
@@ -88,8 +66,7 @@ sfc_efx_rx_qrefill(struct sfc_efx_rxq *rxq)
 	struct rte_mbuf *m;
 	uint16_t port_id = rxq->dp.dpq.port_id;
 
-	free_space = EFX_RXQ_LIMIT(rxq->ptr_mask + 1) -
-		(added - rxq->completed);
+	free_space = rxq->max_fill_level - (added - rxq->completed);
 
 	if (free_space < rxq->refill_threshold)
 		return;
@@ -193,7 +170,7 @@ sfc_efx_rx_desc_flags_to_packet_type(const unsigned int desc_flags)
 }
 
 static const uint32_t *
-sfc_efx_supported_ptypes_get(void)
+sfc_efx_supported_ptypes_get(__rte_unused uint32_t tunnel_encaps)
 {
 	static const uint32_t ptypes[] = {
 		RTE_PTYPE_L2_ETHER,
@@ -413,6 +390,19 @@ sfc_rxq_by_dp_rxq(const struct sfc_dp_rxq *dp_rxq)
 	return rxq;
 }
 
+static sfc_dp_rx_qsize_up_rings_t sfc_efx_rx_qsize_up_rings;
+static int
+sfc_efx_rx_qsize_up_rings(uint16_t nb_rx_desc,
+			  unsigned int *rxq_entries,
+			  unsigned int *evq_entries,
+			  unsigned int *rxq_max_fill_level)
+{
+	*rxq_entries = nb_rx_desc;
+	*evq_entries = nb_rx_desc;
+	*rxq_max_fill_level = EFX_RXQ_LIMIT(*rxq_entries);
+	return 0;
+}
+
 static sfc_dp_rx_qcreate_t sfc_efx_rx_qcreate;
 static int
 sfc_efx_rx_qcreate(uint16_t port_id, uint16_t queue_id,
@@ -446,6 +436,7 @@ sfc_efx_rx_qcreate(uint16_t port_id, uint16_t queue_id,
 	rxq->ptr_mask = info->rxq_entries - 1;
 	rxq->batch_max = info->batch_max;
 	rxq->prefix_size = info->prefix_size;
+	rxq->max_fill_level = info->max_fill_level;
 	rxq->refill_threshold = info->refill_threshold;
 	rxq->buf_size = info->buf_size;
 	rxq->refill_mb_pool = info->refill_mb_pool;
@@ -535,6 +526,7 @@ struct sfc_dp_rx sfc_efx_rx = {
 		.hw_fw_caps	= 0,
 	},
 	.features		= SFC_DP_RX_FEAT_SCATTER,
+	.qsize_up_rings		= sfc_efx_rx_qsize_up_rings,
 	.qcreate		= sfc_efx_rx_qcreate,
 	.qdestroy		= sfc_efx_rx_qdestroy,
 	.qstart			= sfc_efx_rx_qstart,
@@ -697,8 +689,8 @@ sfc_rx_qstart(struct sfc_adapter *sa, unsigned int sw_index)
 
 	rc = efx_rx_qcreate(sa->nic, rxq->hw_index, 0, rxq_info->type,
 			    &rxq->mem, rxq_info->entries,
-			    0 /* not used on EF10 */, evq->common,
-			    &rxq->common);
+			    0 /* not used on EF10 */, rxq_info->type_flags,
+			    evq->common, &rxq->common);
 	if (rc != 0)
 		goto fail_rx_qcreate;
 
@@ -771,10 +763,9 @@ sfc_rx_qstop(struct sfc_adapter *sa, unsigned int sw_index)
 }
 
 static int
-sfc_rx_qcheck_conf(struct sfc_adapter *sa, uint16_t nb_rx_desc,
+sfc_rx_qcheck_conf(struct sfc_adapter *sa, unsigned int rxq_max_fill_level,
 		   const struct rte_eth_rxconf *rx_conf)
 {
-	const uint16_t rx_free_thresh_max = EFX_RXQ_LIMIT(nb_rx_desc);
 	int rc = 0;
 
 	if (rx_conf->rx_thresh.pthresh != 0 ||
@@ -784,10 +775,10 @@ sfc_rx_qcheck_conf(struct sfc_adapter *sa, uint16_t nb_rx_desc,
 			"RxQ prefetch/host/writeback thresholds are not supported");
 	}
 
-	if (rx_conf->rx_free_thresh > rx_free_thresh_max) {
+	if (rx_conf->rx_free_thresh > rxq_max_fill_level) {
 		sfc_err(sa,
 			"RxQ free threshold too large: %u vs maximum %u",
-			rx_conf->rx_free_thresh, rx_free_thresh_max);
+			rx_conf->rx_free_thresh, rxq_max_fill_level);
 		rc = EINVAL;
 	}
 
@@ -907,13 +898,25 @@ sfc_rx_qinit(struct sfc_adapter *sa, unsigned int sw_index,
 {
 	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
 	int rc;
+	unsigned int rxq_entries;
+	unsigned int evq_entries;
+	unsigned int rxq_max_fill_level;
 	uint16_t buf_size;
 	struct sfc_rxq_info *rxq_info;
 	struct sfc_evq *evq;
 	struct sfc_rxq *rxq;
 	struct sfc_dp_rx_qcreate_info info;
 
-	rc = sfc_rx_qcheck_conf(sa, nb_rx_desc, rx_conf);
+	rc = sa->dp_rx->qsize_up_rings(nb_rx_desc, &rxq_entries, &evq_entries,
+				       &rxq_max_fill_level);
+	if (rc != 0)
+		goto fail_size_up_rings;
+	SFC_ASSERT(rxq_entries >= EFX_RXQ_MINNDESCS);
+	SFC_ASSERT(rxq_entries <= EFX_RXQ_MAXNDESCS);
+	SFC_ASSERT(rxq_entries >= nb_rx_desc);
+	SFC_ASSERT(rxq_max_fill_level <= nb_rx_desc);
+
+	rc = sfc_rx_qcheck_conf(sa, rxq_max_fill_level, rx_conf);
 	if (rc != 0)
 		goto fail_bad_conf;
 
@@ -940,14 +943,19 @@ sfc_rx_qinit(struct sfc_adapter *sa, unsigned int sw_index,
 	SFC_ASSERT(sw_index < sa->rxq_count);
 	rxq_info = &sa->rxq_info[sw_index];
 
-	SFC_ASSERT(nb_rx_desc <= rxq_info->max_entries);
-	rxq_info->entries = nb_rx_desc;
-	rxq_info->type =
+	SFC_ASSERT(rxq_entries <= rxq_info->max_entries);
+	rxq_info->entries = rxq_entries;
+	rxq_info->type = EFX_RXQ_TYPE_DEFAULT;
+	rxq_info->type_flags =
 		sa->eth_dev->data->dev_conf.rxmode.enable_scatter ?
-		EFX_RXQ_TYPE_SCATTER : EFX_RXQ_TYPE_DEFAULT;
+		EFX_RXQ_FLAG_SCATTER : EFX_RXQ_FLAG_NONE;
+
+	if ((encp->enc_tunnel_encapsulations_supported != 0) &&
+	    (sa->dp_rx->features & SFC_DP_RX_FEAT_TUNNELS))
+		rxq_info->type_flags |= EFX_RXQ_FLAG_INNER_CLASSES;
 
 	rc = sfc_ev_qinit(sa, SFC_EVQ_TYPE_RX, sw_index,
-			  rxq_info->entries, socket_id, &evq);
+			  evq_entries, socket_id, &evq);
 	if (rc != 0)
 		goto fail_ev_qinit;
 
@@ -972,6 +980,7 @@ sfc_rx_qinit(struct sfc_adapter *sa, unsigned int sw_index,
 
 	memset(&info, 0, sizeof(info));
 	info.refill_mb_pool = rxq->refill_mb_pool;
+	info.max_fill_level = rxq_max_fill_level;
 	info.refill_threshold = rxq->refill_threshold;
 	info.buf_size = buf_size;
 	info.batch_max = encp->enc_rx_batch_max;
@@ -984,7 +993,7 @@ sfc_rx_qinit(struct sfc_adapter *sa, unsigned int sw_index,
 
 	info.rxq_entries = rxq_info->entries;
 	info.rxq_hw_ring = rxq->mem.esm_base;
-	info.evq_entries = rxq_info->entries;
+	info.evq_entries = evq_entries;
 	info.evq_hw_ring = evq->mem.esm_base;
 	info.hw_index = rxq->hw_index;
 	info.mem_bar = sa->mem_bar.esb_base;
@@ -1017,6 +1026,7 @@ fail_ev_qinit:
 	rxq_info->entries = 0;
 
 fail_bad_conf:
+fail_size_up_rings:
 	sfc_log_init(sa, "failed %d", rc);
 	return rc;
 }

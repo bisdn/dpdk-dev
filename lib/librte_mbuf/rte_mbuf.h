@@ -62,6 +62,7 @@
 
 #include <stdint.h>
 #include <rte_common.h>
+#include <rte_config.h>
 #include <rte_mempool.h>
 #include <rte_memory.h>
 #include <rte_atomic.h>
@@ -207,6 +208,13 @@ extern "C" {
 /* add new RX flags here */
 
 /* add new TX flags here */
+
+/**
+ * UDP Fragmentation Offload flag. This flag is used for enabling UDP
+ * fragmentation in SW or in HW. When use UFO, mbuf->tso_segsz is used
+ * to store the MSS of UDP fragments.
+ */
+#define PKT_TX_UDP_SEG	(1ULL << 42)
 
 /**
  * Request security offload processing on the TX packet.
@@ -1541,12 +1549,10 @@ static inline uint16_t rte_pktmbuf_tailroom(const struct rte_mbuf *m)
  */
 static inline struct rte_mbuf *rte_pktmbuf_lastseg(struct rte_mbuf *m)
 {
-	struct rte_mbuf *m2 = (struct rte_mbuf *)m;
-
 	__rte_mbuf_sanity_check(m, 1);
-	while (m2->next != NULL)
-		m2 = m2->next;
-	return m2;
+	while (m->next != NULL)
+		m = m->next;
+	return m;
 }
 
 /**

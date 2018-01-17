@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2017 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2017 Intel Corporation
  */
 
 #ifndef _RTE_ETHDEV_H_
@@ -181,6 +152,7 @@ extern "C" {
 #include <rte_devargs.h>
 #include <rte_errno.h>
 #include <rte_common.h>
+#include <rte_config.h>
 
 #include "rte_ether.h"
 #include "rte_eth_ctrl.h"
@@ -262,17 +234,17 @@ __extension__
 struct rte_eth_link {
 	uint32_t link_speed;        /**< ETH_SPEED_NUM_ */
 	uint16_t link_duplex  : 1;  /**< ETH_LINK_[HALF/FULL]_DUPLEX */
-	uint16_t link_autoneg : 1;  /**< ETH_LINK_SPEED_[AUTONEG/FIXED] */
+	uint16_t link_autoneg : 1;  /**< ETH_LINK_[AUTONEG/FIXED] */
 	uint16_t link_status  : 1;  /**< ETH_LINK_[DOWN/UP] */
 } __attribute__((aligned(8)));      /**< aligned for atomic64 read/write */
 
 /* Utility constants */
-#define ETH_LINK_HALF_DUPLEX    0 /**< Half-duplex connection. */
-#define ETH_LINK_FULL_DUPLEX    1 /**< Full-duplex connection. */
-#define ETH_LINK_DOWN           0 /**< Link is down. */
-#define ETH_LINK_UP             1 /**< Link is up. */
-#define ETH_LINK_FIXED          0 /**< No autonegotiation. */
-#define ETH_LINK_AUTONEG        1 /**< Autonegotiated. */
+#define ETH_LINK_HALF_DUPLEX 0 /**< Half-duplex connection (see link_duplex). */
+#define ETH_LINK_FULL_DUPLEX 1 /**< Full-duplex connection (see link_duplex). */
+#define ETH_LINK_DOWN        0 /**< Link is down (see link_status). */
+#define ETH_LINK_UP          1 /**< Link is up (see link_status). */
+#define ETH_LINK_FIXED       0 /**< No autonegotiation (see link_autoneg). */
+#define ETH_LINK_AUTONEG     1 /**< Autonegotiated (see link_autoneg). */
 
 /**
  * A structure used to configure the ring threshold registers of an RX/TX
@@ -1136,6 +1108,8 @@ struct rte_eth_dcb_info {
 #define RTE_ETH_QUEUE_STATE_STARTED 1
 
 struct rte_eth_dev;
+
+#define RTE_ETH_ALL RTE_MAX_ETHPORTS
 
 struct rte_eth_dev_callback;
 /** @internal Structure to keep track of registered callbacks */
@@ -2059,7 +2033,7 @@ int rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
  *   the DMA memory allocated for the transmit descriptors of the ring.
  * @param tx_conf
  *   The pointer to the configuration data to be used for the transmit queue.
- *   NULL value is allowed, in which case default RX configuration
+ *   NULL value is allowed, in which case default TX configuration
  *   will be used.
  *   The *tx_conf* structure contains the following data:
  *   - The *tx_thresh* structure with the values of the Prefetch, Host, and
@@ -3526,6 +3500,8 @@ enum rte_eth_event_type {
 	RTE_ETH_EVENT_VF_MBOX,  /**< message from the VF received by PF */
 	RTE_ETH_EVENT_MACSEC,   /**< MACsec offload related event */
 	RTE_ETH_EVENT_INTR_RMV, /**< device removal event */
+	RTE_ETH_EVENT_NEW,      /**< port is probed */
+	RTE_ETH_EVENT_DESTROY,  /**< port is released */
 	RTE_ETH_EVENT_MAX       /**< max value of this enum */
 };
 
@@ -3536,10 +3512,11 @@ typedef int (*rte_eth_dev_cb_fn)(uint16_t port_id,
 
 
 /**
- * Register a callback function for specific port id.
+ * Register a callback function for port event.
  *
  * @param port_id
  *  Port id.
+ *  RTE_ETH_ALL means register the event for all port ids.
  * @param event
  *  Event interested.
  * @param cb_fn
@@ -3556,10 +3533,11 @@ int rte_eth_dev_callback_register(uint16_t port_id,
 		rte_eth_dev_cb_fn cb_fn, void *cb_arg);
 
 /**
- * Unregister a callback function for specific port id.
+ * Unregister a callback function for port event.
  *
  * @param port_id
  *  Port id.
+ *  RTE_ETH_ALL means unregister the event for all port ids.
  * @param event
  *  Event interested.
  * @param cb_fn
@@ -3585,8 +3563,6 @@ int rte_eth_dev_callback_unregister(uint16_t port_id,
  *  Pointer to struct rte_eth_dev.
  * @param event
  *  Eth device interrupt event type.
- * @param cb_arg
- *  callback parameter.
  * @param ret_param
  *  To pass data back to user application.
  *  This allows the user application to decide if a particular function
@@ -3596,7 +3572,7 @@ int rte_eth_dev_callback_unregister(uint16_t port_id,
  *  int
  */
 int _rte_eth_dev_callback_process(struct rte_eth_dev *dev,
-		enum rte_eth_event_type event, void *cb_arg, void *ret_param);
+		enum rte_eth_event_type event, void *ret_param);
 
 /**
  * When there is no rx packet coming in Rx Queue for a long time, we can

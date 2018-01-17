@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2016-2017 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2016-2017 Intel Corporation
  */
 
 #include <rte_atomic.h>
@@ -60,7 +31,6 @@
 #include <net/if.h>
 #include <linux/if_tun.h>
 #include <linux/if_ether.h>
-#include <linux/version.h>
 #include <fcntl.h>
 
 #include <rte_eth_tap.h>
@@ -77,9 +47,6 @@
 #define ETH_TAP_REMOTE_ARG      "remote"
 #define ETH_TAP_MAC_ARG         "mac"
 #define ETH_TAP_MAC_FIXED       "fixed"
-
-#define FLOWER_KERNEL_VERSION KERNEL_VERSION(4, 2, 0)
-#define FLOWER_VLAN_KERNEL_VERSION KERNEL_VERSION(4, 9, 0)
 
 static struct rte_vdev_driver pmd_tap_drv;
 
@@ -99,7 +66,7 @@ static struct rte_eth_link pmd_link = {
 	.link_speed = ETH_SPEED_NUM_10G,
 	.link_duplex = ETH_LINK_FULL_DUPLEX,
 	.link_status = ETH_LINK_DOWN,
-	.link_autoneg = ETH_LINK_SPEED_AUTONEG
+	.link_autoneg = ETH_LINK_AUTONEG
 };
 
 static void
@@ -1123,7 +1090,7 @@ tap_dev_intr_handler(void *cb_arg)
 	struct rte_eth_dev *dev = cb_arg;
 	struct pmd_internals *pmd = dev->data->dev_private;
 
-	nl_recv(pmd->intr_handle.fd, tap_nl_msg_handler, dev);
+	tap_nl_recv(pmd->intr_handle.fd, tap_nl_msg_handler, dev);
 }
 
 static int
@@ -1134,20 +1101,20 @@ tap_intr_handle_set(struct rte_eth_dev *dev, int set)
 	/* In any case, disable interrupt if the conf is no longer there. */
 	if (!dev->data->dev_conf.intr_conf.lsc) {
 		if (pmd->intr_handle.fd != -1) {
-			nl_final(pmd->intr_handle.fd);
+			tap_nl_final(pmd->intr_handle.fd);
 			rte_intr_callback_unregister(&pmd->intr_handle,
 				tap_dev_intr_handler, dev);
 		}
 		return 0;
 	}
 	if (set) {
-		pmd->intr_handle.fd = nl_init(RTMGRP_LINK);
+		pmd->intr_handle.fd = tap_nl_init(RTMGRP_LINK);
 		if (unlikely(pmd->intr_handle.fd == -1))
 			return -EBADF;
 		return rte_intr_callback_register(
 			&pmd->intr_handle, tap_dev_intr_handler, dev);
 	}
-	nl_final(pmd->intr_handle.fd);
+	tap_nl_final(pmd->intr_handle.fd);
 	return rte_intr_callback_unregister(&pmd->intr_handle,
 					    tap_dev_intr_handler, dev);
 }
@@ -1328,7 +1295,7 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 	 * - rte_flow actual/implicit lists
 	 * - implicit rules
 	 */
-	pmd->nlsk_fd = nl_init(0);
+	pmd->nlsk_fd = tap_nl_init(0);
 	if (pmd->nlsk_fd == -1) {
 		RTE_LOG(WARNING, PMD, "%s: failed to create netlink socket.\n",
 			pmd->name);
@@ -1579,7 +1546,7 @@ rte_pmd_tap_remove(struct rte_vdev_device *dev)
 	if (internals->nlsk_fd) {
 		tap_flow_flush(eth_dev, NULL);
 		tap_flow_implicit_flush(internals, NULL);
-		nl_final(internals->nlsk_fd);
+		tap_nl_final(internals->nlsk_fd);
 	}
 	for (i = 0; i < RTE_PMD_TAP_MAX_QUEUES; i++) {
 		if (internals->rxq[i].fd != -1) {

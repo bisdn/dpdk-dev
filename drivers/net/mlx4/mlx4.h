@@ -53,6 +53,11 @@
 #include <rte_mempool.h>
 #include <rte_spinlock.h>
 
+#ifndef IBV_RX_HASH_INNER
+/** This is not necessarily defined by supported RDMA core versions. */
+#define IBV_RX_HASH_INNER (1ull << 31)
+#endif /* IBV_RX_HASH_INNER */
+
 /** Maximum number of simultaneous MAC addresses. This value is arbitrary. */
 #define MLX4_MAX_MAC_ADDRESSES 128
 
@@ -126,8 +131,9 @@ struct priv {
 	uint32_t vf:1; /**< This is a VF device. */
 	uint32_t intr_alarm:1; /**< An interrupt alarm is scheduled. */
 	uint32_t isolated:1; /**< Toggle isolated mode. */
-	uint32_t hw_csum:1; /* Checksum offload is supported. */
-	uint32_t hw_csum_l2tun:1; /* Checksum support for L2 tunnels. */
+	uint32_t hw_csum:1; /**< Checksum offload is supported. */
+	uint32_t hw_csum_l2tun:1; /**< Checksum support for L2 tunnels. */
+	uint64_t hw_rss_sup; /**< Supported RSS hash fields (Verbs format). */
 	struct rte_intr_handle intr_handle; /**< Port interrupt handle. */
 	struct mlx4_drop *drop; /**< Shared resources for drop flow rules. */
 	LIST_HEAD(, mlx4_rss) rss; /**< Shared targets for Rx flow rules. */

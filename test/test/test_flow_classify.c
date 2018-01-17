@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2017 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2017 Intel Corporation
  */
 
 #include <string.h>
@@ -51,16 +22,10 @@
 
 
 #define FLOW_CLASSIFY_MAX_RULE_NUM 100
-struct flow_classifier *cls;
-
-struct flow_classifier {
-	struct rte_flow_classifier *cls;
-	uint32_t table_id[RTE_FLOW_CLASSIFY_TABLE_MAX];
-	uint32_t n_tables;
-};
+struct flow_classifier_acl *cls;
 
 struct flow_classifier_acl {
-	struct flow_classifier cls;
+	struct rte_flow_classifier *cls;
 } __rte_cache_aligned;
 
 /*
@@ -73,7 +38,15 @@ test_invalid_parameters(void)
 	struct rte_flow_classify_rule *rule;
 	int ret;
 
-	rule = rte_flow_classify_table_entry_add(NULL, 1, NULL, NULL, NULL,
+	ret = rte_flow_classify_validate(NULL, NULL, NULL, NULL, NULL);
+	if (!ret) {
+		printf("Line %i: rte_flow_classify_validate",
+			__LINE__);
+		printf(" with NULL param should have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(NULL, NULL, NULL, NULL,
 			NULL, NULL);
 	if (rule) {
 		printf("Line %i: flow_classifier_table_entry_add", __LINE__);
@@ -81,7 +54,7 @@ test_invalid_parameters(void)
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(NULL, 1, NULL);
+	ret = rte_flow_classify_table_entry_delete(NULL, NULL);
 	if (!ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -89,14 +62,14 @@ test_invalid_parameters(void)
 		return -1;
 	}
 
-	ret = rte_flow_classifier_query(NULL, 1, NULL, 0, NULL, NULL);
+	ret = rte_flow_classifier_query(NULL, NULL, 0, NULL, NULL);
 	if (!ret) {
 		printf("Line %i: flow_classifier_query", __LINE__);
 		printf(" with NULL param should have failed!\n");
 		return -1;
 	}
 
-	rule = rte_flow_classify_table_entry_add(NULL, 1, NULL, NULL, NULL,
+	rule = rte_flow_classify_table_entry_add(NULL, NULL, NULL, NULL,
 		NULL, &error);
 	if (rule) {
 		printf("Line %i: flow_classify_table_entry_add ", __LINE__);
@@ -104,7 +77,7 @@ test_invalid_parameters(void)
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(NULL, 1, NULL);
+	ret = rte_flow_classify_table_entry_delete(NULL, NULL);
 	if (!ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -112,7 +85,7 @@ test_invalid_parameters(void)
 		return -1;
 	}
 
-	ret = rte_flow_classifier_query(NULL, 1, NULL, 0, NULL, NULL);
+	ret = rte_flow_classifier_query(NULL, NULL, 0, NULL, NULL);
 	if (!ret) {
 		printf("Line %i: flow_classifier_query", __LINE__);
 		printf(" with NULL param should have failed!\n");
@@ -129,7 +102,8 @@ test_valid_parameters(void)
 	int key_found;
 
 	/*
-	 * set up parameters for rte_flow_classify_table_entry_add and
+	 * set up parameters for rte_flow_classify_validate,
+	 * rte_flow_classify_table_entry_add and
 	 * rte_flow_classify_table_entry_delete
 	 */
 
@@ -142,15 +116,24 @@ test_valid_parameters(void)
 	actions[0] = count_action;
 	actions[1] = end_action;
 
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (ret) {
+		printf("Line %i: rte_flow_classify_validate",
+			__LINE__);
+		printf(" should not have failed!\n");
+		return -1;
+	}
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
+
 	if (!rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should not have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -168,7 +151,8 @@ test_invalid_patterns(void)
 	int key_found;
 
 	/*
-	 * set up parameters for rte_flow_classify_table_entry_add and
+	 * set up parameters for rte_flow_classify_validate,
+	 * rte_flow_classify_table_entry_add and
 	 * rte_flow_classify_table_entry_delete
 	 */
 
@@ -183,15 +167,24 @@ test_invalid_patterns(void)
 
 	pattern[0] = eth_item;
 	pattern[1] = ipv4_udp_item_bad;
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (!ret) {
+		printf("Line %i: rte_flow_classify_validate", __LINE__);
+		printf(" should have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (!ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -202,15 +195,24 @@ test_invalid_patterns(void)
 	pattern[1] = ipv4_udp_item_1;
 	pattern[2] = udp_item_bad;
 	pattern[3] = end_item_bad;
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (!ret) {
+		printf("Line %i: rte_flow_classify_validate", __LINE__);
+		printf(" should have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (!ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -228,7 +230,8 @@ test_invalid_actions(void)
 	int key_found;
 
 	/*
-	 * set up parameters for rte_flow_classify_table_entry_add and
+	 * set up parameters for rte_flow_classify_validate,
+	 * rte_flow_classify_table_entry_add and
 	 * rte_flow_classify_table_entry_delete
 	 */
 
@@ -241,15 +244,23 @@ test_invalid_actions(void)
 	actions[0] = count_action_bad;
 	actions[1] = end_action;
 
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (!ret) {
+		printf("Line %i: rte_flow_classify_validate", __LINE__);
+		printf(" should have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (!ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -260,15 +271,23 @@ test_invalid_actions(void)
 	actions[0] = count_action;
 	actions[1] = end_action_bad;
 
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (!ret) {
+		printf("Line %i: rte_flow_classify_validate", __LINE__);
+		printf(" should have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (!ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -449,7 +468,8 @@ test_query_udp(void)
 		bufs[i]->packet_type = RTE_PTYPE_L3_IPV4;
 
 	/*
-	 * set up parameters for rte_flow_classify_table_entry_add and
+	 * set up parameters for rte_flow_classify_validate,
+	 * rte_flow_classify_table_entry_add and
 	 * rte_flow_classify_table_entry_delete
 	 */
 
@@ -462,15 +482,23 @@ test_query_udp(void)
 	actions[0] = count_action;
 	actions[1] = end_action;
 
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (ret) {
+		printf("Line %i: rte_flow_classify_validate", __LINE__);
+		printf(" should not have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (!rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should not have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classifier_query(cls->cls, 0, bufs, MAX_PKT_BURST,
+	ret = rte_flow_classifier_query(cls->cls, bufs, MAX_PKT_BURST,
 			rule, &udp_classify_stats);
 	if (ret) {
 		printf("Line %i: flow_classifier_query", __LINE__);
@@ -478,7 +506,7 @@ test_query_udp(void)
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -507,7 +535,8 @@ test_query_tcp(void)
 		bufs[i]->packet_type = RTE_PTYPE_L3_IPV4;
 
 	/*
-	 * set up parameters for rte_flow_classify_table_entry_add and
+	 * set up parameters for rte_flow_classify_validate,
+	 * rte_flow_classify_table_entry_add and
 	 * rte_flow_classify_table_entry_delete
 	 */
 
@@ -520,15 +549,23 @@ test_query_tcp(void)
 	actions[0] = count_action;
 	actions[1] = end_action;
 
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (ret) {
+		printf("Line %i: flow_classifier_query", __LINE__);
+		printf(" should not have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (!rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should not have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classifier_query(cls->cls, 0, bufs, MAX_PKT_BURST,
+	ret = rte_flow_classifier_query(cls->cls, bufs, MAX_PKT_BURST,
 			rule, &tcp_classify_stats);
 	if (ret) {
 		printf("Line %i: flow_classifier_query", __LINE__);
@@ -536,7 +573,7 @@ test_query_tcp(void)
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -565,7 +602,8 @@ test_query_sctp(void)
 		bufs[i]->packet_type = RTE_PTYPE_L3_IPV4;
 
 	/*
-	 * set up parameters rte_flow_classify_table_entry_add and
+	 * set up parameters rte_flow_classify_validate,
+	 * rte_flow_classify_table_entry_add and
 	 * rte_flow_classify_table_entry_delete
 	 */
 
@@ -578,15 +616,23 @@ test_query_sctp(void)
 	actions[0] = count_action;
 	actions[1] = end_action;
 
-	rule = rte_flow_classify_table_entry_add(cls->cls, 0, &key_found,
-			&attr, pattern, actions, &error);
+	ret = rte_flow_classify_validate(cls->cls, &attr, pattern,
+			actions, &error);
+	if (ret) {
+		printf("Line %i: flow_classifier_query", __LINE__);
+		printf(" should not have failed!\n");
+		return -1;
+	}
+
+	rule = rte_flow_classify_table_entry_add(cls->cls, &attr, pattern,
+			actions, &key_found, &error);
 	if (!rule) {
 		printf("Line %i: flow_classify_table_entry_add", __LINE__);
 		printf(" should not have failed!\n");
 		return -1;
 	}
 
-	ret = rte_flow_classifier_query(cls->cls, 0, bufs, MAX_PKT_BURST,
+	ret = rte_flow_classifier_query(cls->cls, bufs, MAX_PKT_BURST,
 			rule, &sctp_classify_stats);
 	if (ret) {
 		printf("Line %i: flow_classifier_query", __LINE__);
@@ -594,7 +640,7 @@ test_query_sctp(void)
 		return -1;
 	}
 
-	ret = rte_flow_classify_table_entry_delete(cls->cls, 0, rule);
+	ret = rte_flow_classify_table_entry_delete(cls->cls, rule);
 	if (ret) {
 		printf("Line %i: rte_flow_classify_table_entry_delete",
 			__LINE__);
@@ -622,7 +668,6 @@ test_flow_classify(void)
 
 	cls_params.name = "flow_classifier";
 	cls_params.socket_id = socket_id;
-	cls_params.type = RTE_FLOW_CLASSIFY_TABLE_TYPE_ACL;
 	cls->cls = rte_flow_classifier_create(&cls_params);
 
 	/* initialise ACL table params */
@@ -632,11 +677,11 @@ test_flow_classify(void)
 	memcpy(table_acl_params.field_format, ipv4_defs, sizeof(ipv4_defs));
 
 	/* initialise table create params */
-	cls_table_params.ops = &rte_table_acl_ops,
-	cls_table_params.arg_create = &table_acl_params,
+	cls_table_params.ops = &rte_table_acl_ops;
+	cls_table_params.arg_create = &table_acl_params;
+	cls_table_params.type = RTE_FLOW_CLASSIFY_TABLE_ACL_IP4_5TUPLE;
 
-	ret = rte_flow_classify_table_create(cls->cls, &cls_table_params,
-			&cls->table_id[0]);
+	ret = rte_flow_classify_table_create(cls->cls, &cls_table_params);
 	if (ret) {
 		printf("Line %i: f_create has failed!\n", __LINE__);
 		rte_flow_classifier_free(cls->cls);

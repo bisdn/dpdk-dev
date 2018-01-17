@@ -64,8 +64,11 @@ priv_txq_start(struct priv *priv)
 
 		if (!txq_ctrl)
 			continue;
-		LIST_FOREACH(mr, &priv->mr, next)
+		LIST_FOREACH(mr, &priv->mr, next) {
 			priv_txq_mp2mr_reg(priv, &txq_ctrl->txq, mr->mp, idx++);
+			if (idx == MLX5_PMD_TX_MP_CACHE)
+				break;
+		}
 		txq_alloc_elts(txq_ctrl);
 		txq_ctrl->ibv = mlx5_priv_txq_ibv_new(priv, i);
 		if (!txq_ctrl->ibv) {
@@ -132,9 +135,6 @@ mlx5_dev_start(struct rte_eth_dev *dev)
 	struct mlx5_mr *mr = NULL;
 	int err;
 
-	if (mlx5_is_secondary())
-		return -E_RTE_SECONDARY;
-
 	dev->data->dev_started = 1;
 	priv_lock(priv);
 	err = priv_flow_create_drop_queue(priv);
@@ -152,7 +152,7 @@ mlx5_dev_start(struct rte_eth_dev *dev)
 		goto error;
 	}
 	/* Update send callback. */
-	priv_dev_select_tx_function(priv, dev);
+	dev->tx_pkt_burst = priv_select_tx_function(priv, dev);
 	err = priv_rxq_start(priv);
 	if (err) {
 		ERROR("%p: RXQ allocation failed: %s",
@@ -160,7 +160,7 @@ mlx5_dev_start(struct rte_eth_dev *dev)
 		goto error;
 	}
 	/* Update receive callback. */
-	priv_dev_select_rx_function(priv, dev);
+	dev->rx_pkt_burst = priv_select_rx_function(priv, dev);
 	err = priv_dev_traffic_enable(priv, dev);
 	if (err) {
 		ERROR("%p: an error occurred while configuring control flows:"
@@ -212,9 +212,6 @@ mlx5_dev_stop(struct rte_eth_dev *dev)
 {
 	struct priv *priv = dev->data->dev_private;
 	struct mlx5_mr *mr;
-
-	if (mlx5_is_secondary())
-		return;
 
 	priv_lock(priv);
 	dev->data->dev_started = 0;

@@ -1,34 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2016 Intel Corporation
  */
 
 #include <stdint.h>
@@ -55,6 +26,7 @@
 #include <rte_memory.h>
 #include <rte_eal.h>
 #include <rte_dev.h>
+#include <rte_cycles.h>
 
 #include "virtio_ethdev.h"
 #include "virtio_pci.h"
@@ -105,6 +77,9 @@ static int virtio_dev_queue_stats_mapping_set(
 	uint16_t queue_id,
 	uint8_t stat_idx,
 	uint8_t is_rx);
+
+int virtio_logtype_init;
+int virtio_logtype_driver;
 
 /*
  * The set of PCI devices this driver supports
@@ -177,6 +152,8 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		PMD_INIT_LOG(ERR, "Control queue is not supported.");
 		return -1;
 	}
+
+	rte_spinlock_lock(&cvq->lock);
 	vq = cvq->vq;
 	head = vq->vq_desc_head_idx;
 
@@ -184,8 +161,10 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		"vq->hw->cvq = %p vq = %p",
 		vq->vq_desc_head_idx, status, vq->hw->cvq, vq);
 
-	if ((vq->vq_free_cnt < ((uint32_t)pkt_num + 2)) || (pkt_num < 1))
+	if (vq->vq_free_cnt < pkt_num + 2 || pkt_num < 1) {
+		rte_spinlock_unlock(&cvq->lock);
 		return -1;
+	}
 
 	memcpy(cvq->virtio_net_hdr_mz->addr, ctrl,
 		sizeof(struct virtio_pmd_ctrl));
@@ -261,6 +240,7 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 
 	result = cvq->virtio_net_hdr_mz->addr;
 
+	rte_spinlock_unlock(&cvq->lock);
 	return result->status;
 }
 
@@ -893,7 +873,7 @@ static int virtio_dev_xstats_get_names(struct rte_eth_dev *dev,
 		/* Note: limit checked in rte_eth_xstats_names() */
 
 		for (i = 0; i < dev->data->nb_rx_queues; i++) {
-			struct virtqueue *rxvq = dev->data->rx_queues[i];
+			struct virtnet_rx *rxvq = dev->data->rx_queues[i];
 			if (rxvq == NULL)
 				continue;
 			for (t = 0; t < VIRTIO_NB_RXQ_XSTATS; t++) {
@@ -906,7 +886,7 @@ static int virtio_dev_xstats_get_names(struct rte_eth_dev *dev,
 		}
 
 		for (i = 0; i < dev->data->nb_tx_queues; i++) {
-			struct virtqueue *txvq = dev->data->tx_queues[i];
+			struct virtnet_tx *txvq = dev->data->tx_queues[i];
 			if (txvq == NULL)
 				continue;
 			for (t = 0; t < VIRTIO_NB_TXQ_XSTATS; t++) {
@@ -1244,6 +1224,57 @@ virtio_negotiate_features(struct virtio_hw *hw, uint64_t req_features)
 	return 0;
 }
 
+int
+virtio_dev_pause(struct rte_eth_dev *dev)
+{
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	rte_spinlock_lock(&hw->state_lock);
+
+	if (hw->started == 0) {
+		/* Device is just stopped. */
+		rte_spinlock_unlock(&hw->state_lock);
+		return -1;
+	}
+	hw->started = 0;
+	/*
+	 * Prevent the worker threads from touching queues to avoid contention,
+	 * 1 ms should be enough for the ongoing Tx function to finish.
+	 */
+	rte_delay_ms(1);
+	return 0;
+}
+
+/*
+ * Recover hw state to let the worker threads continue.
+ */
+void
+virtio_dev_resume(struct rte_eth_dev *dev)
+{
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	hw->started = 1;
+	rte_spinlock_unlock(&hw->state_lock);
+}
+
+/*
+ * Should be called only after device is paused.
+ */
+int
+virtio_inject_pkts(struct rte_eth_dev *dev, struct rte_mbuf **tx_pkts,
+		int nb_pkts)
+{
+	struct virtio_hw *hw = dev->data->dev_private;
+	struct virtnet_tx *txvq = dev->data->tx_queues[0];
+	int ret;
+
+	hw->inject_pkts = tx_pkts;
+	ret = dev->tx_pkt_burst(txvq, tx_pkts, nb_pkts);
+	hw->inject_pkts = NULL;
+
+	return ret;
+}
+
 /*
  * Process Virtio Config changed interrupt and call the callback
  * if link state changed.
@@ -1266,7 +1297,7 @@ virtio_interrupt_handler(void *param)
 		if (virtio_dev_link_update(dev, 0) == 0)
 			_rte_eth_dev_callback_process(dev,
 						      RTE_ETH_EVENT_INTR_LSC,
-						      NULL, NULL);
+						      NULL);
 	}
 
 }
@@ -1508,6 +1539,8 @@ virtio_init_device(struct rte_eth_dev *eth_dev, uint64_t req_features)
 	} else {
 		PMD_INIT_LOG(DEBUG, "config->max_virtqueue_pairs=1");
 		hw->max_queue_pairs = 1;
+		hw->max_mtu = VIRTIO_MAX_RX_PKTLEN - ETHER_HDR_LEN -
+			VLAN_TAG_LEN - hw->vtnet_hdr_size;
 	}
 
 	ret = virtio_alloc_queues(eth_dev);
@@ -1754,7 +1787,7 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 
 	if (rxmode->enable_lro &&
 		(!vtpci_with_feature(hw, VIRTIO_NET_F_GUEST_TSO4) ||
-			!vtpci_with_feature(hw, VIRTIO_NET_F_GUEST_TSO4))) {
+		 !vtpci_with_feature(hw, VIRTIO_NET_F_GUEST_TSO6))) {
 		PMD_DRV_LOG(ERR,
 			"Large Receive Offload not available on this host");
 		return -ENOTSUP;
@@ -1780,6 +1813,8 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 			PMD_DRV_LOG(ERR, "failed to set config vector");
 			return -EBUSY;
 		}
+
+	rte_spinlock_init(&hw->state_lock);
 
 	hw->use_simple_rx = 1;
 	hw->use_simple_tx = 1;
@@ -1860,7 +1895,7 @@ virtio_dev_start(struct rte_eth_dev *dev)
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
 		rxvq = dev->data->rx_queues[i];
 		/* Flush the old packets */
-		virtqueue_flush(rxvq->vq);
+		virtqueue_rxvq_flush(rxvq->vq);
 		virtqueue_notify(rxvq->vq);
 	}
 
@@ -1947,12 +1982,14 @@ virtio_dev_stop(struct rte_eth_dev *dev)
 
 	PMD_INIT_LOG(DEBUG, "stop");
 
+	rte_spinlock_lock(&hw->state_lock);
 	if (intr_conf->lsc || intr_conf->rxq)
 		virtio_intr_disable(dev);
 
 	hw->started = 0;
 	memset(&link, 0, sizeof(link));
 	virtio_dev_atomic_write_link_status(dev, &link);
+	rte_spinlock_unlock(&hw->state_lock);
 }
 
 static int
@@ -1965,7 +2002,7 @@ virtio_dev_link_update(struct rte_eth_dev *dev, __rte_unused int wait_to_complet
 	virtio_dev_atomic_read_link_status(dev, &link);
 	old = link;
 	link.link_duplex = ETH_LINK_FULL_DUPLEX;
-	link.link_speed  = SPEED_10G;
+	link.link_speed  = ETH_SPEED_NUM_10G;
 
 	if (hw->started == 0) {
 		link.link_status = ETH_LINK_DOWN;
@@ -2072,3 +2109,15 @@ __rte_unused uint8_t is_rx)
 RTE_PMD_EXPORT_NAME(net_virtio, __COUNTER__);
 RTE_PMD_REGISTER_PCI_TABLE(net_virtio, pci_id_virtio_map);
 RTE_PMD_REGISTER_KMOD_DEP(net_virtio, "* igb_uio | uio_pci_generic | vfio-pci");
+
+RTE_INIT(virtio_init_log);
+static void
+virtio_init_log(void)
+{
+	virtio_logtype_init = rte_log_register("pmd.virtio.init");
+	if (virtio_logtype_init >= 0)
+		rte_log_set_level(virtio_logtype_init, RTE_LOG_NOTICE);
+	virtio_logtype_driver = rte_log_register("pmd.virtio.driver");
+	if (virtio_logtype_driver >= 0)
+		rte_log_set_level(virtio_logtype_driver, RTE_LOG_NOTICE);
+}
