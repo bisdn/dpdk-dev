@@ -11,7 +11,7 @@
 #include <stdarg.h>
 
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_log.h>
 #include <rte_memzone.h>
 #include <rte_malloc.h>
@@ -66,17 +66,17 @@
 #define I40E_COUNTER_INDEX_FDIR(pf_id)   (0 + (pf_id) * I40E_COUNTER_PF)
 
 #define I40E_FDIR_FLOWS ( \
-	(1 << RTE_ETH_FLOW_FRAG_IPV4) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV4_UDP) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV4_TCP) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV4_SCTP) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV4_OTHER) | \
-	(1 << RTE_ETH_FLOW_FRAG_IPV6) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV6_UDP) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV6_TCP) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV6_SCTP) | \
-	(1 << RTE_ETH_FLOW_NONFRAG_IPV6_OTHER) | \
-	(1 << RTE_ETH_FLOW_L2_PAYLOAD))
+	(1ULL << RTE_ETH_FLOW_FRAG_IPV4) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV4_UDP) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV4_TCP) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV4_SCTP) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV4_OTHER) | \
+	(1ULL << RTE_ETH_FLOW_FRAG_IPV6) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV6_UDP) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV6_TCP) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV6_SCTP) | \
+	(1ULL << RTE_ETH_FLOW_NONFRAG_IPV6_OTHER) | \
+	(1ULL << RTE_ETH_FLOW_L2_PAYLOAD))
 
 static int i40e_fdir_filter_programming(struct i40e_pf *pf,
 			enum i40e_filter_pctype pctype,
@@ -139,7 +139,6 @@ i40e_fdir_rx_queue_init(struct i40e_rx_queue *rxq)
 
 	rte_wmb();
 	/* Init the RX tail regieter. */
-	I40E_PCI_REG_WRITE(rxq->qrx_tail, 0);
 	I40E_PCI_REG_WRITE(rxq->qrx_tail, rxq->nb_rx_desc - 1);
 
 	return err;
@@ -527,6 +526,7 @@ i40e_set_flx_pld_cfg(struct i40e_pf *pf,
 			  (num << I40E_GLQF_ORT_FIELD_CNT_SHIFT) |
 			  (layer_idx * I40E_MAX_FLXPLD_FIED);
 		I40E_WRITE_REG(hw, I40E_GLQF_ORT(33 + layer_idx), flx_ort);
+		i40e_global_cfg_warning(I40E_WARNING_ENA_FLX_PLD);
 	}
 
 	for (i = 0; i < num; i++) {
@@ -649,22 +649,31 @@ i40e_fdir_configure(struct rte_eth_dev *dev)
 		PMD_DRV_LOG(ERR, " invalid configuration arguments.");
 		return -EINVAL;
 	}
-	/* configure flex payload */
-	for (i = 0; i < conf->nb_payloads; i++)
-		i40e_set_flx_pld_cfg(pf, &conf->flex_set[i]);
-	/* configure flex mask*/
-	for (i = 0; i < conf->nb_flexmasks; i++) {
-		if (hw->mac.type == I40E_MAC_X722) {
-			/* get translated pctype value in fd pctype register */
-			pctype = (enum i40e_filter_pctype)i40e_read_rx_ctl(
-				hw, I40E_GLQF_FD_PCTYPES(
-				(int)i40e_flowtype_to_pctype(pf->adapter,
-				conf->flex_mask[i].flow_type)));
-		} else
-			pctype = i40e_flowtype_to_pctype(pf->adapter,
-						conf->flex_mask[i].flow_type);
 
-		i40e_set_flex_mask_on_pctype(pf, pctype, &conf->flex_mask[i]);
+	if (!pf->support_multi_driver) {
+		/* configure flex payload */
+		for (i = 0; i < conf->nb_payloads; i++)
+			i40e_set_flx_pld_cfg(pf, &conf->flex_set[i]);
+		/* configure flex mask*/
+		for (i = 0; i < conf->nb_flexmasks; i++) {
+			if (hw->mac.type == I40E_MAC_X722) {
+				/* get pctype value in fd pctype register */
+				pctype = (enum i40e_filter_pctype)
+					  i40e_read_rx_ctl(hw,
+						I40E_GLQF_FD_PCTYPES(
+						(int)i40e_flowtype_to_pctype(
+						pf->adapter,
+						conf->flex_mask[i].flow_type)));
+			} else {
+				pctype = i40e_flowtype_to_pctype(pf->adapter,
+						  conf->flex_mask[i].flow_type);
+			}
+
+			i40e_set_flex_mask_on_pctype(pf, pctype,
+						     &conf->flex_mask[i]);
+		}
+	} else {
+		PMD_DRV_LOG(ERR, "Not support flexible payload.");
 	}
 
 	return ret;
@@ -1342,13 +1351,18 @@ i40e_check_fdir_programming_status(struct i40e_rx_queue *rxq)
 				PMD_DRV_LOG(ERR, "invalid programming status"
 					    " reported, error = %u.", error);
 		} else
-			PMD_DRV_LOG(ERR, "unknown programming status"
+			PMD_DRV_LOG(INFO, "unknown programming status"
 				    " reported, len = %d, id = %u.", len, id);
 		rxdp->wb.qword1.status_error_len = 0;
 		rxq->rx_tail++;
 		if (unlikely(rxq->rx_tail == rxq->nb_rx_desc))
 			rxq->rx_tail = 0;
+		if (rxq->rx_tail == 0)
+			I40E_PCI_REG_WRITE(rxq->qrx_tail, rxq->nb_rx_desc - 1);
+		else
+			I40E_PCI_REG_WRITE(rxq->qrx_tail, rxq->rx_tail - 1);
 	}
+
 	return ret;
 }
 
@@ -1591,8 +1605,15 @@ i40e_flow_add_del_fdir_filter(struct rte_eth_dev *dev,
 	if (add) {
 		fdir_filter = rte_zmalloc("fdir_filter",
 					  sizeof(*fdir_filter), 0);
+		if (fdir_filter == NULL) {
+			PMD_DRV_LOG(ERR, "Failed to alloc memory.");
+			return -ENOMEM;
+		}
+
 		rte_memcpy(fdir_filter, &check_filter, sizeof(check_filter));
 		ret = i40e_sw_fdir_filter_insert(pf, fdir_filter);
+		if (ret < 0)
+			rte_free(fdir_filter);
 	} else {
 		ret = i40e_sw_fdir_filter_del(pf, &node->fdir.input);
 	}
@@ -1999,6 +2020,7 @@ i40e_fdir_info_get(struct rte_eth_dev *dev, struct rte_eth_fdir_info *fdir)
 	struct i40e_hw *hw = I40E_PF_TO_HW(pf);
 	uint16_t num_flex_set = 0;
 	uint16_t num_flex_mask = 0;
+	uint16_t i;
 
 	if (dev->data->dev_conf.fdir_conf.mode == RTE_FDIR_MODE_PERFECT)
 		fdir->mode = RTE_FDIR_MODE_PERFECT;
@@ -2011,6 +2033,8 @@ i40e_fdir_info_get(struct rte_eth_dev *dev, struct rte_eth_fdir_info *fdir)
 		(uint32_t)hw->func_caps.fd_filters_best_effort;
 	fdir->max_flexpayload = I40E_FDIR_MAX_FLEX_LEN;
 	fdir->flow_types_mask[0] = I40E_FDIR_FLOWS;
+	for (i = 1; i < RTE_FLOW_MASK_ARRAY_SIZE; i++)
+		fdir->flow_types_mask[i] = 0ULL;
 	fdir->flex_payload_unit = sizeof(uint16_t);
 	fdir->flex_bitmask_unit = sizeof(uint16_t);
 	fdir->max_flex_payload_segment_num = I40E_MAX_FLXPLD_FIED;

@@ -15,7 +15,7 @@
  *
  */
 
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 
 /**
  * @warning
@@ -33,7 +33,7 @@
  *   - (-ENODEV) if *port* invalid.
  *   - (-EINVAL) if bad parameter.
  */
-int
+int __rte_experimental
 rte_pmd_dpaa_set_tx_loopback(uint8_t port, uint8_t on);
 
 #endif /* _PMD_DPAA_H_ */

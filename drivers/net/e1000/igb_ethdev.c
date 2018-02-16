@@ -16,7 +16,7 @@
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_memory.h>
 #include <rte_eal.h>
@@ -3295,7 +3295,8 @@ igbvf_dev_start(struct rte_eth_dev *dev)
 	}
 
 	/* check and configure queue intr-vector mapping */
-	if (dev->data->dev_conf.intr_conf.rxq != 0) {
+	if (rte_intr_cap_multiple(intr_handle) &&
+	    dev->data->dev_conf.intr_conf.rxq) {
 		intr_vector = dev->data->nb_rx_queues;
 		ret = rte_intr_efd_enable(intr_handle, intr_vector);
 		if (ret)

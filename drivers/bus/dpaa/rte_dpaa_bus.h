@@ -17,6 +17,8 @@
 
 #define FSL_DPAA_BUS_NAME	"FSL_DPAA_BUS"
 
+#define DPAA_MEMPOOL_OPS_NAME	"dpaa"
+
 #define DEV_TO_DPAA_DEVICE(ptr)	\
 		container_of(ptr, struct rte_dpaa_device, device)
 
@@ -30,6 +32,8 @@
 #define SVR_MASK		0xffff0000
 
 extern unsigned int dpaa_svr_family;
+
+extern RTE_DEFINE_PER_LCORE(bool, dpaa_io);
 
 struct rte_dpaa_device;
 struct rte_dpaa_driver;
@@ -154,6 +158,20 @@ static void dpaainitfn_ ##nm(void) \
 	rte_dpaa_driver_register(&dpaa_drv); \
 } \
 RTE_PMD_EXPORT_NAME(nm, __COUNTER__)
+
+/* Create storage for dqrr entries per lcore */
+#define DPAA_PORTAL_DEQUEUE_DEPTH	16
+struct dpaa_portal_dqrr {
+	void *mbuf[DPAA_PORTAL_DEQUEUE_DEPTH];
+	uint64_t dqrr_held;
+	uint8_t dqrr_size;
+};
+
+RTE_DECLARE_PER_LCORE(struct dpaa_portal_dqrr, held_bufs);
+
+#define DPAA_PER_LCORE_DQRR_SIZE       RTE_PER_LCORE(held_bufs).dqrr_size
+#define DPAA_PER_LCORE_DQRR_HELD       RTE_PER_LCORE(held_bufs).dqrr_held
+#define DPAA_PER_LCORE_DQRR_MBUF(i)    RTE_PER_LCORE(held_bufs).mbuf[i]
 
 #ifdef __cplusplus
 }

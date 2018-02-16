@@ -21,6 +21,8 @@ DEPDIRS-librte_cmdline := librte_eal
 DIRS-$(CONFIG_RTE_LIBRTE_ETHER) += librte_ether
 DEPDIRS-librte_ether := librte_net librte_eal librte_mempool librte_ring
 DEPDIRS-librte_ether += librte_mbuf
+DIRS-$(CONFIG_RTE_LIBRTE_BBDEV) += librte_bbdev
+DEPDIRS-librte_bbdev := librte_eal librte_mempool librte_mbuf
 DIRS-$(CONFIG_RTE_LIBRTE_CRYPTODEV) += librte_cryptodev
 DEPDIRS-librte_cryptodev := librte_eal librte_mempool librte_ring librte_mbuf
 DEPDIRS-librte_cryptodev += librte_kvargs
@@ -30,6 +32,8 @@ DEPDIRS-librte_security += librte_ether
 DEPDIRS-librte_security += librte_cryptodev
 DIRS-$(CONFIG_RTE_LIBRTE_EVENTDEV) += librte_eventdev
 DEPDIRS-librte_eventdev := librte_eal librte_ring librte_ether librte_hash
+DIRS-$(CONFIG_RTE_LIBRTE_RAWDEV) += librte_rawdev
+DEPDIRS-librte_rawdev := librte_eal librte_ether
 DIRS-$(CONFIG_RTE_LIBRTE_VHOST) += librte_vhost
 DEPDIRS-librte_vhost := librte_eal librte_mempool librte_mbuf librte_ether \
 			librte_net

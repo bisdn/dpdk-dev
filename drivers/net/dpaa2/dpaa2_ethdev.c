@@ -9,7 +9,7 @@
 #include <net/if.h>
 
 #include <rte_mbuf.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_memcpy.h>
 #include <rte_string_fns.h>
@@ -147,6 +147,12 @@ dpaa2_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 	PMD_INIT_FUNC_TRACE();
 
 	if (mask & ETH_VLAN_FILTER_MASK) {
+		/* VLAN Filter not avaialble */
+		if (!priv->max_vlan_filters) {
+			RTE_LOG(INFO, PMD, "VLAN filter not available\n");
+			goto next_mask;
+		}
+
 		if (dev->data->dev_conf.rxmode.hw_vlan_filter)
 			ret = dpni_enable_vlan_filter(dpni, CMD_PRI_LOW,
 						      priv->token, true);
@@ -157,7 +163,7 @@ dpaa2_vlan_offload_set(struct rte_eth_dev *dev, int mask)
 			RTE_LOG(ERR, PMD, "Unable to set vlan filter = %d\n",
 				ret);
 	}
-
+next_mask:
 	if (mask & ETH_VLAN_EXTEND_MASK) {
 		if (dev->data->dev_conf.rxmode.hw_vlan_extend)
 			RTE_LOG(INFO, PMD,
@@ -373,6 +379,25 @@ dpaa2_eth_dev_configure(struct rte_eth_dev *dev)
 		PMD_INIT_LOG(ERR, "Error to get TX l4 csum:Error = %d\n", ret);
 		return ret;
 	}
+
+	/* Enabling hash results in FD requires setting DPNI_FLCTYPE_HASH in
+	 * dpni_set_offload API. Setting this FLCTYPE for DPNI sets the FD[SC]
+	 * to 0 for LS2 in the hardware thus disabling data/annotation
+	 * stashing. For LX2 this is fixed in hardware and thus hash result and
+	 * parse results can be received in FD using this option.
+	 */
+	if (dpaa2_svr_family == SVR_LX2160A) {
+		ret = dpni_set_offload(dpni, CMD_PRI_LOW, priv->token,
+				       DPNI_FLCTYPE_HASH, true);
+		if (ret) {
+			PMD_INIT_LOG(ERR, "Error setting FLCTYPE: Err = %d\n",
+				     ret);
+			return ret;
+		}
+	}
+
+	if (eth_conf->rxmode.hw_vlan_filter)
+		dpaa2_vlan_offload_set(dev, ETH_VLAN_FILTER_MASK);
 
 	/* update the current status */
 	dpaa2_dev_link_update(dev, 0);
@@ -764,16 +789,6 @@ dpaa2_dev_start(struct rte_eth_dev *dev)
 			     "code = %d\n", ret);
 		return ret;
 	}
-	/* VLAN Offload Settings */
-	if (priv->max_vlan_filters) {
-		ret = dpaa2_vlan_offload_set(dev, ETH_VLAN_FILTER_MASK);
-		if (ret) {
-			PMD_INIT_LOG(ERR, "Error to dpaa2_vlan_offload_set:"
-				     "code = %d\n", ret);
-			return ret;
-		}
-	}
-
 
 	/* if the interrupts were configured on this devices*/
 	if (intr_handle && (intr_handle->fd) &&
@@ -1670,6 +1685,8 @@ int dpaa2_eth_eventq_attach(const struct rte_eth_dev *dev,
 
 	if (queue_conf->ev.sched_type == RTE_SCHED_TYPE_PARALLEL)
 		dpaa2_ethq->cb = dpaa2_dev_process_parallel_event;
+	else if (queue_conf->ev.sched_type == RTE_SCHED_TYPE_ATOMIC)
+		dpaa2_ethq->cb = dpaa2_dev_process_atomic_event;
 	else
 		return -EINVAL;
 
@@ -1678,6 +1695,11 @@ int dpaa2_eth_eventq_attach(const struct rte_eth_dev *dev,
 	cfg.destination.type = DPNI_DEST_DPCON;
 	cfg.destination.id = dpcon_id;
 	cfg.destination.priority = queue_conf->ev.priority;
+
+	if (queue_conf->ev.sched_type == RTE_SCHED_TYPE_ATOMIC) {
+		options |= DPNI_QUEUE_OPT_HOLD_ACTIVE;
+		cfg.destination.hold_active = 1;
+	}
 
 	options |= DPNI_QUEUE_OPT_USER_CTX;
 	cfg.user_context = (uint64_t)(dpaa2_ethq);

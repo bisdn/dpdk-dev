@@ -17,7 +17,7 @@
 #include <rte_mbuf.h>
 #include <rte_malloc.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_tcp.h>
 #include <rte_sctp.h>
 #include <rte_udp.h>
@@ -2719,6 +2719,7 @@ i40e_fdir_setup_rx_resources(struct i40e_pf *pf)
 	rxq->vsi = pf->fdir.fdir_vsi;
 
 	rxq->rx_ring_phys_addr = rz->iova;
+	memset(rz->addr, 0, I40E_FDIR_NUM_RX_DESC * sizeof(union i40e_rx_desc));
 	rxq->rx_ring = (union i40e_rx_desc *)rz->addr;
 
 	/*

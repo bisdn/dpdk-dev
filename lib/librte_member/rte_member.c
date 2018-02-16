@@ -162,8 +162,9 @@ rte_member_create(const struct rte_member_parameters *params)
 	return setsum;
 
 error_unlock_exit:
+	rte_free(te);
+	rte_free(setsum);
 	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
-	rte_member_free(setsum);
 	return NULL;
 }
 
@@ -301,7 +302,7 @@ RTE_INIT(librte_member_init_log);
 static void
 librte_member_init_log(void)
 {
-	librte_member_logtype = rte_log_register("librte.member");
+	librte_member_logtype = rte_log_register("lib.member");
 	if (librte_member_logtype >= 0)
 		rte_log_set_level(librte_member_logtype, RTE_LOG_DEBUG);
 }

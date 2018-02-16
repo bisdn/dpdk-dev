@@ -9,7 +9,7 @@
 
 #include <rte_tailq.h>
 #include <rte_common.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_eth_ctrl.h>
 #include <rte_ether.h>
 #include <rte_flow.h>
@@ -999,7 +999,7 @@ fail_scale_tbl_set:
 fail_filter_insert:
 fail_scale_key_set:
 fail_scale_mode_set:
-	if (rss != NULL)
+	if (flow->rss)
 		efx_rx_scale_context_free(sa->nic, spec->efs_rss_context);
 
 fail_scale_context_alloc:
@@ -1104,8 +1104,6 @@ sfc_flow_parse(struct rte_eth_dev *dev,
 	struct sfc_adapter *sa = dev->data->dev_private;
 	int rc;
 
-	memset(&flow->spec, 0, sizeof(flow->spec));
-
 	rc = sfc_flow_parse_attr(attr, flow, error);
 	if (rc != 0)
 		goto fail_bad_value;
@@ -1137,6 +1135,8 @@ sfc_flow_validate(struct rte_eth_dev *dev,
 		  struct rte_flow_error *error)
 {
 	struct rte_flow flow;
+
+	memset(&flow, 0, sizeof(flow));
 
 	return sfc_flow_parse(dev, attr, pattern, actions, &flow, error);
 }

@@ -2,6 +2,8 @@
  * Copyright(c) 2015-2017 Intel Corporation
  */
 
+#include <time.h>
+
 #include <rte_common.h>
 #include <rte_hexdump.h>
 #include <rte_mbuf.h>
@@ -6581,16 +6583,28 @@ test_null_cipher_only_operation(void)
 
 	return TEST_SUCCESS;
 }
-
+uint8_t orig_data[] = {0xab, 0xab, 0xab, 0xab,
+			0xab, 0xab, 0xab, 0xab,
+			0xab, 0xab, 0xab, 0xab,
+			0xab, 0xab, 0xab, 0xab};
 static int
 test_null_auth_only_operation(void)
 {
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
+	uint8_t *digest;
 
 	/* Generate test mbuf data and space for digest */
 	ut_params->ibuf = setup_test_string(ts_params->mbuf_pool,
 			catch_22_quote, QUOTE_512_BYTES, 0);
+
+	/* create a pointer for digest, but don't expect anything to be written
+	 * here in a NULL auth algo so no mbuf append done.
+	 */
+	digest = rte_pktmbuf_mtod_offset(ut_params->ibuf, uint8_t *,
+			QUOTE_512_BYTES);
+	/* prefill the memory pointed to by digest */
+	memcpy(digest, orig_data, sizeof(orig_data));
 
 	/* Setup HMAC Parameters */
 	ut_params->auth_xform.type = RTE_CRYPTO_SYM_XFORM_AUTH;
@@ -6623,6 +6637,9 @@ test_null_auth_only_operation(void)
 
 	sym_op->auth.data.offset = 0;
 	sym_op->auth.data.length = QUOTE_512_BYTES;
+	sym_op->auth.digest.data = digest;
+	sym_op->auth.digest.phys_addr = rte_pktmbuf_iova_offset(ut_params->ibuf,
+			QUOTE_512_BYTES);
 
 	/* Process crypto operation */
 	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
@@ -6631,19 +6648,35 @@ test_null_auth_only_operation(void)
 
 	TEST_ASSERT_EQUAL(ut_params->op->status, RTE_CRYPTO_OP_STATUS_SUCCESS,
 			"crypto operation processing failed");
+	/* Make sure memory pointed to by digest hasn't been overwritten */
+	TEST_ASSERT_BUFFERS_ARE_EQUAL(
+			orig_data,
+			digest,
+			sizeof(orig_data),
+			"Memory at digest ptr overwritten unexpectedly");
 
 	return TEST_SUCCESS;
 }
+
 
 static int
 test_null_cipher_auth_operation(void)
 {
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
+	uint8_t *digest;
 
 	/* Generate test mbuf data and space for digest */
 	ut_params->ibuf = setup_test_string(ts_params->mbuf_pool,
 			catch_22_quote, QUOTE_512_BYTES, 0);
+
+	/* create a pointer for digest, but don't expect anything to be written
+	 * here in a NULL auth algo so no mbuf append done.
+	 */
+	digest = rte_pktmbuf_mtod_offset(ut_params->ibuf, uint8_t *,
+			QUOTE_512_BYTES);
+	/* prefill the memory pointed to by digest */
+	memcpy(digest, orig_data, sizeof(orig_data));
 
 	/* Setup Cipher Parameters */
 	ut_params->cipher_xform.type = RTE_CRYPTO_SYM_XFORM_CIPHER;
@@ -6686,6 +6719,9 @@ test_null_cipher_auth_operation(void)
 
 	sym_op->auth.data.offset = 0;
 	sym_op->auth.data.length = QUOTE_512_BYTES;
+	sym_op->auth.digest.data = digest;
+	sym_op->auth.digest.phys_addr = rte_pktmbuf_iova_offset(ut_params->ibuf,
+			QUOTE_512_BYTES);
 
 	/* Process crypto operation */
 	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
@@ -6701,6 +6737,12 @@ test_null_cipher_auth_operation(void)
 			catch_22_quote,
 			QUOTE_512_BYTES,
 			"Ciphertext data not as expected");
+	/* Make sure memory pointed to by digest hasn't been overwritten */
+	TEST_ASSERT_BUFFERS_ARE_EQUAL(
+			orig_data,
+			digest,
+			sizeof(orig_data),
+			"Memory at digest ptr overwritten unexpectedly");
 
 	return TEST_SUCCESS;
 }
@@ -6710,10 +6752,19 @@ test_null_auth_cipher_operation(void)
 {
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
+	uint8_t *digest;
 
-	/* Generate test mbuf data and space for digest */
+	/* Generate test mbuf data */
 	ut_params->ibuf = setup_test_string(ts_params->mbuf_pool,
 			catch_22_quote, QUOTE_512_BYTES, 0);
+
+	/* create a pointer for digest, but don't expect anything to be written
+	 * here in a NULL auth algo so no mbuf append done.
+	 */
+	digest = rte_pktmbuf_mtod_offset(ut_params->ibuf, uint8_t *,
+				QUOTE_512_BYTES);
+	/* prefill the memory pointed to by digest */
+	memcpy(digest, orig_data, sizeof(orig_data));
 
 	/* Setup Cipher Parameters */
 	ut_params->cipher_xform.type = RTE_CRYPTO_SYM_XFORM_CIPHER;
@@ -6756,6 +6807,9 @@ test_null_auth_cipher_operation(void)
 
 	sym_op->auth.data.offset = 0;
 	sym_op->auth.data.length = QUOTE_512_BYTES;
+	sym_op->auth.digest.data = digest;
+	sym_op->auth.digest.phys_addr = rte_pktmbuf_iova_offset(ut_params->ibuf,
+					QUOTE_512_BYTES);
 
 	/* Process crypto operation */
 	ut_params->op = process_crypto_request(ts_params->valid_devs[0],
@@ -6771,6 +6825,12 @@ test_null_auth_cipher_operation(void)
 			catch_22_quote,
 			QUOTE_512_BYTES,
 			"Ciphertext data not as expected");
+	/* Make sure memory pointed to by digest hasn't been overwritten */
+	TEST_ASSERT_BUFFERS_ARE_EQUAL(
+			orig_data,
+			digest,
+			sizeof(orig_data),
+			"Memory at digest ptr overwritten unexpectedly");
 
 	return TEST_SUCCESS;
 }
@@ -8720,6 +8780,18 @@ static struct unit_test_suite cryptodev_aesni_mb_testsuite  = {
 						test_DES_cipheronly_mb_all),
 		TEST_CASE_ST(ut_setup, ut_teardown,
 						test_DES_docsis_mb_all),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_CCM_authenticated_encryption_test_case_128_1),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_CCM_authenticated_decryption_test_case_128_1),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_CCM_authenticated_encryption_test_case_128_2),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_CCM_authenticated_decryption_test_case_128_2),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_CCM_authenticated_encryption_test_case_128_3),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_CCM_authenticated_decryption_test_case_128_3),
 
 		TEST_CASES_END() /**< NULL terminate unit test array */
 	}
@@ -9351,6 +9423,16 @@ static struct unit_test_suite cryptodev_dpaa_sec_testsuite  = {
 		TEST_CASE_ST(ut_setup, ut_teardown,
 			test_AES_GCM_authenticated_decryption_oop_test_case_1),
 
+		/** Scatter-Gather */
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_in_place_1500B),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_out_of_place_400B_400B),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_out_of_place_400B_1seg),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_out_of_place_1500B_2000B),
+
 		TEST_CASES_END() /**< NULL terminate unit test array */
 	}
 };
@@ -9478,6 +9560,16 @@ static struct unit_test_suite cryptodev_dpaa2_sec_testsuite  = {
 		TEST_CASE_ST(ut_setup, ut_teardown,
 			test_AES_GCM_authenticated_decryption_oop_test_case_1),
 
+		/** Scatter-Gather */
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_in_place_1500B),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_out_of_place_400B_400B),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_out_of_place_400B_1seg),
+		TEST_CASE_ST(ut_setup, ut_teardown,
+			test_AES_GCM_auth_encrypt_SGL_out_of_place_1500B_2000B),
+
 		TEST_CASES_END() /**< NULL terminate unit test array */
 	}
 };
@@ -9565,7 +9657,7 @@ test_cryptodev_qat(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "QAT PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_QAT is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_qat_testsuite);
@@ -9581,7 +9673,7 @@ test_cryptodev_aesni_mb(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "AESNI MB PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_AESNI_MB is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_aesni_mb_testsuite);
@@ -9597,7 +9689,7 @@ test_cryptodev_openssl(void)
 		RTE_LOG(ERR, USER1, "OPENSSL PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_OPENSSL is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_openssl_testsuite);
@@ -9613,7 +9705,7 @@ test_cryptodev_aesni_gcm(void)
 		RTE_LOG(ERR, USER1, "AESNI GCM PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_AESNI_GCM is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_aesni_gcm_testsuite);
@@ -9629,7 +9721,7 @@ test_cryptodev_null(void)
 		RTE_LOG(ERR, USER1, "NULL PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_NULL is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_null_testsuite);
@@ -9645,7 +9737,7 @@ test_cryptodev_sw_snow3g(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "SNOW3G PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_SNOW3G is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_sw_snow3g_testsuite);
@@ -9661,7 +9753,7 @@ test_cryptodev_sw_kasumi(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "ZUC PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_KASUMI is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_sw_kasumi_testsuite);
@@ -9677,7 +9769,7 @@ test_cryptodev_sw_zuc(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "ZUC PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_ZUC is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_sw_zuc_testsuite);
@@ -9693,7 +9785,7 @@ test_cryptodev_armv8(void)
 		RTE_LOG(ERR, USER1, "ARMV8 PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_ARMV8 is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_armv8_testsuite);
@@ -9709,7 +9801,7 @@ test_cryptodev_mrvl(void)
 		RTE_LOG(ERR, USER1, "MRVL PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_MRVL_CRYPTO is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_mrvl_testsuite);
@@ -9727,14 +9819,14 @@ test_cryptodev_scheduler(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "SCHEDULER PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_SCHEDULER is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	if (rte_cryptodev_driver_id_get(
 				RTE_STR(CRYPTODEV_NAME_AESNI_MB_PMD)) == -1) {
 		RTE_LOG(ERR, USER1, "CONFIG_RTE_LIBRTE_PMD_AESNI_MB must be"
 			" enabled in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 }
 	return unit_test_suite_runner(&cryptodev_scheduler_testsuite);
 }
@@ -9753,7 +9845,7 @@ test_cryptodev_dpaa2_sec(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "DPAA2 SEC PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_DPAA2_SEC is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_dpaa2_sec_testsuite);
@@ -9769,7 +9861,7 @@ test_cryptodev_dpaa_sec(void /*argv __rte_unused, int argc __rte_unused*/)
 		RTE_LOG(ERR, USER1, "DPAA SEC PMD must be loaded. Check if "
 				"CONFIG_RTE_LIBRTE_PMD_DPAA_SEC is enabled "
 				"in config file to run this testsuite.\n");
-		return TEST_FAILED;
+		return TEST_SKIPPED;
 	}
 
 	return unit_test_suite_runner(&cryptodev_dpaa_sec_testsuite);

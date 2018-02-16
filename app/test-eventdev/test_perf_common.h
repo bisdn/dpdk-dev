@@ -10,7 +10,9 @@
 #include <unistd.h>
 
 #include <rte_cycles.h>
+#include <rte_ethdev.h>
 #include <rte_eventdev.h>
+#include <rte_event_eth_rx_adapter.h>
 #include <rte_lcore.h>
 #include <rte_malloc.h>
 #include <rte_mempool.h>
@@ -128,15 +130,18 @@ perf_nb_event_ports(struct evt_options *opt)
 int perf_test_result(struct evt_test *test, struct evt_options *opt);
 int perf_opt_check(struct evt_options *opt, uint64_t nb_queues);
 int perf_test_setup(struct evt_test *test, struct evt_options *opt);
+int perf_ethdev_setup(struct evt_test *test, struct evt_options *opt);
 int perf_mempool_setup(struct evt_test *test, struct evt_options *opt);
 int perf_event_dev_port_setup(struct evt_test *test, struct evt_options *opt,
-				uint8_t stride, uint8_t nb_queues);
+				uint8_t stride, uint8_t nb_queues,
+				const struct rte_event_port_conf *port_conf);
 int perf_event_dev_service_setup(uint8_t dev_id);
 int perf_launch_lcores(struct evt_test *test, struct evt_options *opt,
 		int (*worker)(void *));
 void perf_opt_dump(struct evt_options *opt, uint8_t nb_queues);
 void perf_test_destroy(struct evt_test *test, struct evt_options *opt);
 void perf_eventdev_destroy(struct evt_test *test, struct evt_options *opt);
+void perf_ethdev_destroy(struct evt_test *test, struct evt_options *opt);
 void perf_mempool_destroy(struct evt_test *test, struct evt_options *opt);
 
 #endif /* _TEST_PERF_COMMON_ */

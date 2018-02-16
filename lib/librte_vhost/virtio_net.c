@@ -15,6 +15,7 @@
 #include <rte_udp.h>
 #include <rte_sctp.h>
 #include <rte_arp.h>
+#include <rte_spinlock.h>
 
 #include "iotlb.h"
 #include "vhost.h"
@@ -302,8 +303,11 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 	}
 
 	vq = dev->virtqueue[queue_id];
+
+	rte_spinlock_lock(&vq->access_lock);
+
 	if (unlikely(vq->enabled == 0))
-		return 0;
+		goto out_access_unlock;
 
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_lock(vq);
@@ -388,6 +392,9 @@ virtio_dev_rx(struct virtio_net *dev, uint16_t queue_id,
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_unlock(vq);
+
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
 
 	return count;
 }
@@ -621,8 +628,11 @@ virtio_dev_merge_rx(struct virtio_net *dev, uint16_t queue_id,
 	}
 
 	vq = dev->virtqueue[queue_id];
+
+	rte_spinlock_lock(&vq->access_lock);
+
 	if (unlikely(vq->enabled == 0))
-		return 0;
+		goto out_access_unlock;
 
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_lock(vq);
@@ -678,6 +688,9 @@ out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_unlock(vq);
 
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
+
 	return pkt_idx;
 }
 
@@ -689,6 +702,13 @@ rte_vhost_enqueue_burst(int vid, uint16_t queue_id,
 
 	if (!dev)
 		return 0;
+
+	if (unlikely(!(dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET))) {
+		RTE_LOG(ERR, VHOST_DATA,
+			"(%d) %s: built-in vhost net backend is disabled.\n",
+			dev->vid, __func__);
+		return 0;
+	}
 
 	if (dev->features & (1 << VIRTIO_NET_F_MRG_RXBUF))
 		return virtio_dev_merge_rx(dev, queue_id, pkts, count);
@@ -1082,6 +1102,22 @@ mbuf_is_consumed(struct rte_mbuf *m)
 	return true;
 }
 
+static __rte_always_inline void
+restore_mbuf(struct rte_mbuf *m)
+{
+	uint32_t mbuf_size, priv_size;
+
+	while (m) {
+		priv_size = rte_pktmbuf_priv_size(m->pool);
+		mbuf_size = sizeof(struct rte_mbuf) + priv_size;
+		/* start of buffer is after mbuf structure and priv data */
+
+		m->buf_addr = (char *)m + mbuf_size;
+		m->buf_iova = rte_mempool_virt2iova(m) + mbuf_size;
+		m = m->next;
+	}
+}
+
 uint16_t
 rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	struct rte_mempool *mbuf_pool, struct rte_mbuf **pkts, uint16_t count)
@@ -1099,6 +1135,13 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	if (!dev)
 		return 0;
 
+	if (unlikely(!(dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET))) {
+		RTE_LOG(ERR, VHOST_DATA,
+			"(%d) %s: built-in vhost net backend is disabled.\n",
+			dev->vid, __func__);
+		return 0;
+	}
+
 	if (unlikely(!is_valid_virt_queue_idx(queue_id, 1, dev->nr_vring))) {
 		RTE_LOG(ERR, VHOST_DATA, "(%d) %s: invalid virtqueue idx %d.\n",
 			dev->vid, __func__, queue_id);
@@ -1106,8 +1149,12 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 	}
 
 	vq = dev->virtqueue[queue_id];
-	if (unlikely(vq->enabled == 0))
+
+	if (unlikely(rte_spinlock_trylock(&vq->access_lock) == 0))
 		return 0;
+
+	if (unlikely(vq->enabled == 0))
+		goto out_access_unlock;
 
 	vq->batch_copy_nb_elems = 0;
 
@@ -1133,6 +1180,7 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 				nr_updated += 1;
 
 				TAILQ_REMOVE(&vq->zmbuf_list, zmbuf, next);
+				restore_mbuf(zmbuf->mbuf);
 				rte_pktmbuf_free(zmbuf->mbuf);
 				put_zmbuf(zmbuf);
 				vq->nr_zmbuf -= 1;
@@ -1162,19 +1210,13 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 			rte_atomic16_cmpset((volatile uint16_t *)
 				&dev->broadcast_rarp.cnt, 1, 0))) {
 
-		rarp_mbuf = rte_pktmbuf_alloc(mbuf_pool);
+		rarp_mbuf = rte_net_make_rarp_packet(mbuf_pool, &dev->mac);
 		if (rarp_mbuf == NULL) {
 			RTE_LOG(ERR, VHOST_DATA,
-				"Failed to allocate memory for mbuf.\n");
+				"Failed to make RARP packet.\n");
 			return 0;
 		}
-
-		if (rte_net_make_rarp_packet(rarp_mbuf, &dev->mac) < 0) {
-			rte_pktmbuf_free(rarp_mbuf);
-			rarp_mbuf = NULL;
-		} else {
-			count -= 1;
-		}
+		count -= 1;
 	}
 
 	free_entries = *((volatile uint16_t *)&vq->avail->idx) -
@@ -1281,6 +1323,9 @@ rte_vhost_dequeue_burst(int vid, uint16_t queue_id,
 out:
 	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
 		vhost_user_iotlb_rd_unlock(vq);
+
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
 
 	if (unlikely(rarp_mbuf != NULL)) {
 		/*

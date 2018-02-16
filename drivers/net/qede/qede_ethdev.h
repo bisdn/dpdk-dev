@@ -13,7 +13,7 @@
 #include <sys/queue.h>
 
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_dev.h>
 #include <rte_ip.h>
@@ -45,7 +45,7 @@
 /* Driver versions */
 #define QEDE_PMD_VER_PREFIX		"QEDE PMD"
 #define QEDE_PMD_VERSION_MAJOR		2
-#define QEDE_PMD_VERSION_MINOR	        6
+#define QEDE_PMD_VERSION_MINOR	        7
 #define QEDE_PMD_VERSION_REVISION       0
 #define QEDE_PMD_VERSION_PATCH	        1
 
@@ -187,7 +187,7 @@ struct qede_dev {
 	struct ecore_sb_info *sb_array;
 	struct qede_fastpath *fp_array;
 	uint16_t mtu;
-	uint16_t new_mtu;
+	bool enable_tx_switching;
 	bool rss_enable;
 	struct rte_eth_rss_conf rss_conf;
 	uint16_t rss_ind_table[ECORE_RSS_IND_TABLE_SIZE];
@@ -210,6 +210,8 @@ struct qede_dev {
 	struct qede_fdir_info fdir_info;
 	bool vlan_strip_flg;
 	char drv_ver[QEDE_PMD_DRV_VER_STR_SIZE];
+	bool vport_started;
+	int vlan_offload_mask;
 	void *ethdev;
 };
 

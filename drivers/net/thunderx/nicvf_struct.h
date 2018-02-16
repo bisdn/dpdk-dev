@@ -11,7 +11,7 @@
 #include <rte_mempool.h>
 #include <rte_mbuf.h>
 #include <rte_interrupts.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_memory.h>
 
 struct nicvf_rbdr {
@@ -39,7 +39,7 @@ struct nicvf_txq {
 	uint32_t tail;
 	int32_t xmit_bufs;
 	uint32_t qlen_mask;
-	uint32_t txq_flags;
+	uint64_t offloads;
 	uint16_t queue_id;
 	uint16_t tx_free_thresh;
 } __rte_cache_aligned;

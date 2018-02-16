@@ -44,6 +44,8 @@
 /* Maximum release/acquire from QBMAN */
 #define DPAA2_MBUF_MAX_ACQ_REL	7
 
+#define DPAA2_MEMPOOL_OPS_NAME		"dpaa2"
+
 #define MAX_BPID 256
 #define DPAA2_MBUF_HW_ANNOTATION	64
 #define DPAA2_FD_PTA_SIZE		0
@@ -79,8 +81,6 @@ struct dpaa2_dpio_dev {
 	struct rte_intr_handle intr_handle; /* Interrupt related info */
 	int32_t	epoll_fd; /**< File descriptor created for interrupt polling */
 	int32_t hw_id; /**< An unique ID of this DPIO device instance */
-	uint64_t dqrr_held;
-	uint8_t dqrr_size;
 };
 
 struct dpaa2_dpbp_dev {
@@ -95,8 +95,9 @@ struct dpaa2_dpbp_dev {
 struct queue_storage_info_t {
 	struct qbman_result *dq_storage[NUM_DQS_PER_QUEUE];
 	struct qbman_result *active_dqs;
-	int active_dpio_id;
-	int toggle;
+	uint8_t active_dpio_id;
+	uint8_t toggle;
+	uint8_t last_num_pkts;
 };
 
 struct dpaa2_queue;

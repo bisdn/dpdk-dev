@@ -10,7 +10,7 @@
 #ifndef _SFC_DP_TX_H
 #define _SFC_DP_TX_H
 
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 
 #include "sfc_dp.h"
 
@@ -41,6 +41,8 @@ struct sfc_dp_tx_qcreate_info {
 	unsigned int		free_thresh;
 	/** Transmit queue configuration flags */
 	unsigned int		flags;
+	/** Offloads enabled on the transmit queue */
+	uint64_t		offloads;
 	/** Tx queue size */
 	unsigned int		txq_entries;
 	/** Maximum size of data in the DMA descriptor */

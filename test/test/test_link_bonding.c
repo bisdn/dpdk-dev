@@ -17,6 +17,7 @@
 #include <rte_common.h>
 #include <rte_debug.h>
 #include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_log.h>
 #include <rte_lcore.h>
 #include <rte_memory.h>
@@ -30,13 +31,13 @@
 
 #define TEST_MAX_NUMBER_OF_PORTS (6)
 
-#define RX_RING_SIZE 128
+#define RX_RING_SIZE 1024
 #define RX_FREE_THRESH 32
 #define RX_PTHRESH 8
 #define RX_HTHRESH 8
 #define RX_WTHRESH 0
 
-#define TX_RING_SIZE 512
+#define TX_RING_SIZE 1024
 #define TX_FREE_THRESH 32
 #define TX_PTHRESH 32
 #define TX_HTHRESH 0

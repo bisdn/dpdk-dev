@@ -69,6 +69,13 @@ const struct supported_cipher_algo cipher_algos[] = {
 		.key_len = 16
 	},
 	{
+		.keyword = "aes-256-cbc",
+		.algo = RTE_CRYPTO_CIPHER_AES_CBC,
+		.iv_len = 16,
+		.block_size = 16,
+		.key_len = 32
+	},
+	{
 		.keyword = "aes-128-ctr",
 		.algo = RTE_CRYPTO_CIPHER_AES_CTR,
 		.iv_len = 8,
@@ -239,6 +246,8 @@ parse_sa_tokens(char **tokens, uint32_t n_tokens,
 	/* spi number */
 	APP_CHECK_TOKEN_IS_NUM(tokens, 1, status);
 	if (status->status < 0)
+		return;
+	if (atoi(tokens[1]) == INVALID_SPI)
 		return;
 	rule->spi = atoi(tokens[1]);
 
@@ -622,7 +631,8 @@ print_one_sa_rule(const struct ipsec_sa *sa, int inbound)
 	printf("\tspi_%s(%3u):", inbound?"in":"out", sa->spi);
 
 	for (i = 0; i < RTE_DIM(cipher_algos); i++) {
-		if (cipher_algos[i].algo == sa->cipher_algo) {
+		if (cipher_algos[i].algo == sa->cipher_algo &&
+				cipher_algos[i].key_len == sa->cipher_key_len) {
 			printf("%s ", cipher_algos[i].keyword);
 			break;
 		}

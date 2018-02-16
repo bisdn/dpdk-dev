@@ -553,6 +553,15 @@ test_eventdev_port_setup(void)
 	ret = rte_event_port_setup(TEST_DEV_ID, 0, &pconf);
 	TEST_ASSERT(ret == -EINVAL, "Expected -EINVAL, %d", ret);
 
+	if (!(info.event_dev_cap &
+	      RTE_EVENT_DEV_CAP_IMPLICIT_RELEASE_DISABLE)) {
+		pconf.enqueue_depth = info.max_event_port_enqueue_depth;
+		pconf.disable_implicit_release = 1;
+		ret = rte_event_port_setup(TEST_DEV_ID, 0, &pconf);
+		TEST_ASSERT(ret == -EINVAL, "Expected -EINVAL, %d", ret);
+		pconf.disable_implicit_release = 0;
+	}
+
 	ret = rte_event_port_setup(TEST_DEV_ID, info.max_event_ports,
 					&pconf);
 	TEST_ASSERT(ret == -EINVAL, "Expected -EINVAL, %d", ret);
@@ -811,6 +820,9 @@ test_eventdev_unlink(void)
 	for (i = 0; i < nb_queues; i++)
 		queues[i] = i;
 
+	ret = rte_event_port_link(TEST_DEV_ID, 0, NULL, NULL, 0);
+	TEST_ASSERT(ret >= 0, "Failed to link with NULL device%d",
+				 TEST_DEV_ID);
 
 	ret = rte_event_port_unlink(TEST_DEV_ID, 0, queues, nb_queues);
 	TEST_ASSERT(ret == nb_queues, "Failed to unlink(device%d) ret=%d",
@@ -871,9 +883,9 @@ test_eventdev_link_get(void)
 	ret = rte_event_port_links_get(TEST_DEV_ID, 0, queues, priorities);
 	TEST_ASSERT(ret == 1, "(%d)Wrong link get ret=%d expected=%d",
 					TEST_DEV_ID, ret, 1);
-	/* unlink all*/
+	/* unlink the queue */
 	ret = rte_event_port_unlink(TEST_DEV_ID, 0, NULL, 0);
-	TEST_ASSERT(ret == nb_queues, "Failed to unlink(device%d) ret=%d",
+	TEST_ASSERT(ret == 1, "Failed to unlink(device%d) ret=%d",
 				 TEST_DEV_ID, ret);
 
 	/* 4links and 2 unlinks */
@@ -978,4 +990,26 @@ test_eventdev_common(void)
 	return unit_test_suite_runner(&eventdev_common_testsuite);
 }
 
+static int
+test_eventdev_selftest_impl(const char *pmd, const char *opts)
+{
+	rte_vdev_init(pmd, opts);
+	return rte_event_dev_selftest(rte_event_dev_get_dev_id(pmd));
+}
+
+static int
+test_eventdev_selftest_sw(void)
+{
+	return test_eventdev_selftest_impl("event_sw", "");
+}
+
+static int
+test_eventdev_selftest_octeontx(void)
+{
+	return test_eventdev_selftest_impl("event_octeontx", "");
+}
+
 REGISTER_TEST_COMMAND(eventdev_common_autotest, test_eventdev_common);
+REGISTER_TEST_COMMAND(eventdev_selftest_sw, test_eventdev_selftest_sw);
+REGISTER_TEST_COMMAND(eventdev_selftest_octeontx,
+		test_eventdev_selftest_octeontx);

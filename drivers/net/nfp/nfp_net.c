@@ -43,7 +43,7 @@
 #include <rte_common.h>
 #include <rte_log.h>
 #include <rte_debug.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_dev.h>
 #include <rte_ether.h>
@@ -3165,10 +3165,10 @@ RTE_INIT(nfp_init_log);
 static void
 nfp_init_log(void)
 {
-	nfp_logtype_init = rte_log_register("pmd.nfp.init");
+	nfp_logtype_init = rte_log_register("pmd.net.nfp.init");
 	if (nfp_logtype_init >= 0)
 		rte_log_set_level(nfp_logtype_init, RTE_LOG_NOTICE);
-	nfp_logtype_driver = rte_log_register("pmd.nfp.driver");
+	nfp_logtype_driver = rte_log_register("pmd.net.nfp.driver");
 	if (nfp_logtype_driver >= 0)
 		rte_log_set_level(nfp_logtype_driver, RTE_LOG_NOTICE);
 }

@@ -187,7 +187,8 @@ vhost_user_set_features(struct virtio_net *dev, uint64_t features)
 		(dev->features & (1 << VIRTIO_NET_F_MRG_RXBUF)) ? "on" : "off",
 		(dev->features & (1ULL << VIRTIO_F_VERSION_1)) ? "on" : "off");
 
-	if (!(dev->features & (1ULL << VIRTIO_NET_F_MQ))) {
+	if ((dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET) &&
+	    !(dev->features & (1ULL << VIRTIO_NET_F_MQ))) {
 		/*
 		 * Remove all but first queue pair if MQ hasn't been
 		 * negotiated. This is safe because the device is not
@@ -232,6 +233,7 @@ vhost_user_set_vring_num(struct virtio_net *dev,
 				"zero copy is force disabled\n");
 			dev->dequeue_zero_copy = 0;
 		}
+		TAILQ_INIT(&vq->zmbuf_list);
 	}
 
 	vq->shadow_used_ring = rte_malloc(NULL,
@@ -266,6 +268,9 @@ numa_realloc(struct virtio_net *dev, int index)
 	int oldnode, newnode;
 	struct virtio_net *old_dev;
 	struct vhost_virtqueue *old_vq, *vq;
+	struct zcopy_mbuf *new_zmbuf;
+	struct vring_used_elem *new_shadow_used_ring;
+	struct batch_copy_elem *new_batch_copy_elems;
 	int ret;
 
 	old_dev = dev;
@@ -290,6 +295,33 @@ numa_realloc(struct virtio_net *dev, int index)
 			return dev;
 
 		memcpy(vq, old_vq, sizeof(*vq));
+		TAILQ_INIT(&vq->zmbuf_list);
+
+		new_zmbuf = rte_malloc_socket(NULL, vq->zmbuf_size *
+			sizeof(struct zcopy_mbuf), 0, newnode);
+		if (new_zmbuf) {
+			rte_free(vq->zmbufs);
+			vq->zmbufs = new_zmbuf;
+		}
+
+		new_shadow_used_ring = rte_malloc_socket(NULL,
+			vq->size * sizeof(struct vring_used_elem),
+			RTE_CACHE_LINE_SIZE,
+			newnode);
+		if (new_shadow_used_ring) {
+			rte_free(vq->shadow_used_ring);
+			vq->shadow_used_ring = new_shadow_used_ring;
+		}
+
+		new_batch_copy_elems = rte_malloc_socket(NULL,
+			vq->size * sizeof(struct batch_copy_elem),
+			RTE_CACHE_LINE_SIZE,
+			newnode);
+		if (new_batch_copy_elems) {
+			rte_free(vq->batch_copy_elems);
+			vq->batch_copy_elems = new_batch_copy_elems;
+		}
+
 		rte_free(old_vq);
 	}
 
@@ -1229,12 +1261,47 @@ vhost_user_check_and_alloc_queue_pair(struct virtio_net *dev, VhostUserMsg *msg)
 	return alloc_vring_queue(dev, vring_idx);
 }
 
+static void
+vhost_user_lock_all_queue_pairs(struct virtio_net *dev)
+{
+	unsigned int i = 0;
+	unsigned int vq_num = 0;
+
+	while (vq_num < dev->nr_vring) {
+		struct vhost_virtqueue *vq = dev->virtqueue[i];
+
+		if (vq) {
+			rte_spinlock_lock(&vq->access_lock);
+			vq_num++;
+		}
+		i++;
+	}
+}
+
+static void
+vhost_user_unlock_all_queue_pairs(struct virtio_net *dev)
+{
+	unsigned int i = 0;
+	unsigned int vq_num = 0;
+
+	while (vq_num < dev->nr_vring) {
+		struct vhost_virtqueue *vq = dev->virtqueue[i];
+
+		if (vq) {
+			rte_spinlock_unlock(&vq->access_lock);
+			vq_num++;
+		}
+		i++;
+	}
+}
+
 int
 vhost_user_msg_handler(int vid, int fd)
 {
 	struct virtio_net *dev;
 	struct VhostUserMsg msg;
 	int ret;
+	int unlock_required = 0;
 
 	dev = get_device(vid);
 	if (dev == NULL)
@@ -1278,6 +1345,38 @@ vhost_user_msg_handler(int vid, int fd)
 		RTE_LOG(ERR, VHOST_CONFIG,
 			"failed to alloc queue\n");
 		return -1;
+	}
+
+	/*
+	 * Note: we don't lock all queues on VHOST_USER_GET_VRING_BASE
+	 * and VHOST_USER_RESET_OWNER, since it is sent when virtio stops
+	 * and device is destroyed. destroy_device waits for queues to be
+	 * inactive, so it is safe. Otherwise taking the access_lock
+	 * would cause a dead lock.
+	 */
+	switch (msg.request.master) {
+	case VHOST_USER_SET_FEATURES:
+	case VHOST_USER_SET_PROTOCOL_FEATURES:
+	case VHOST_USER_SET_OWNER:
+	case VHOST_USER_SET_MEM_TABLE:
+	case VHOST_USER_SET_LOG_BASE:
+	case VHOST_USER_SET_LOG_FD:
+	case VHOST_USER_SET_VRING_NUM:
+	case VHOST_USER_SET_VRING_ADDR:
+	case VHOST_USER_SET_VRING_BASE:
+	case VHOST_USER_SET_VRING_KICK:
+	case VHOST_USER_SET_VRING_CALL:
+	case VHOST_USER_SET_VRING_ERR:
+	case VHOST_USER_SET_VRING_ENABLE:
+	case VHOST_USER_SEND_RARP:
+	case VHOST_USER_NET_SET_MTU:
+	case VHOST_USER_SET_SLAVE_REQ_FD:
+		vhost_user_lock_all_queue_pairs(dev);
+		unlock_required = 1;
+		break;
+	default:
+		break;
+
 	}
 
 	switch (msg.request.master) {
@@ -1382,6 +1481,9 @@ vhost_user_msg_handler(int vid, int fd)
 		break;
 
 	}
+
+	if (unlock_required)
+		vhost_user_unlock_all_queue_pairs(dev);
 
 	if (msg.flags & VHOST_USER_NEED_REPLY) {
 		msg.payload.u64 = !!ret;

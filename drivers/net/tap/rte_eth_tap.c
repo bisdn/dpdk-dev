@@ -7,7 +7,7 @@
 #include <rte_byteorder.h>
 #include <rte_common.h>
 #include <rte_mbuf.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_vdev.h>
 #include <rte_malloc.h>
 #include <rte_bus_vdev.h>
@@ -24,6 +24,7 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -43,7 +44,6 @@
 #define DEFAULT_TAP_NAME        "dtap"
 
 #define ETH_TAP_IFACE_ARG       "iface"
-#define ETH_TAP_SPEED_ARG       "speed"
 #define ETH_TAP_REMOTE_ARG      "remote"
 #define ETH_TAP_MAC_ARG         "mac"
 #define ETH_TAP_MAC_FIXED       "fixed"
@@ -52,7 +52,6 @@ static struct rte_vdev_driver pmd_tap_drv;
 
 static const char *valid_arguments[] = {
 	ETH_TAP_IFACE_ARG,
-	ETH_TAP_SPEED_ARG,
 	ETH_TAP_REMOTE_ARG,
 	ETH_TAP_MAC_ARG,
 	NULL
@@ -252,6 +251,45 @@ tap_verify_csum(struct rte_mbuf *mbuf)
 	}
 }
 
+static uint64_t
+tap_rx_offload_get_port_capa(void)
+{
+	/*
+	 * In order to support legacy apps,
+	 * report capabilities also as port capabilities.
+	 */
+	return DEV_RX_OFFLOAD_SCATTER |
+	       DEV_RX_OFFLOAD_IPV4_CKSUM |
+	       DEV_RX_OFFLOAD_UDP_CKSUM |
+	       DEV_RX_OFFLOAD_TCP_CKSUM |
+	       DEV_RX_OFFLOAD_CRC_STRIP;
+}
+
+static uint64_t
+tap_rx_offload_get_queue_capa(void)
+{
+	return DEV_RX_OFFLOAD_SCATTER |
+	       DEV_RX_OFFLOAD_IPV4_CKSUM |
+	       DEV_RX_OFFLOAD_UDP_CKSUM |
+	       DEV_RX_OFFLOAD_TCP_CKSUM |
+	       DEV_RX_OFFLOAD_CRC_STRIP;
+}
+
+static bool
+tap_rxq_are_offloads_valid(struct rte_eth_dev *dev, uint64_t offloads)
+{
+	uint64_t port_offloads = dev->data->dev_conf.rxmode.offloads;
+	uint64_t queue_supp_offloads = tap_rx_offload_get_queue_capa();
+	uint64_t port_supp_offloads = tap_rx_offload_get_port_capa();
+
+	if ((offloads & (queue_supp_offloads | port_supp_offloads)) !=
+	    offloads)
+		return false;
+	if ((port_offloads ^ offloads) & port_supp_offloads)
+		return false;
+	return true;
+}
+
 /* Callback to handle the rx burst of packets to the correct interface and
  * file descriptor(s) in a multi-queue setup.
  */
@@ -276,8 +314,9 @@ pmd_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		int len;
 
 		len = readv(rxq->fd, *rxq->iovecs,
-			    1 + (rxq->rxmode->enable_scatter ?
-				 rxq->nb_rx_desc : 1));
+			    1 +
+			    (rxq->rxmode->offloads & DEV_RX_OFFLOAD_SCATTER ?
+			     rxq->nb_rx_desc : 1));
 		if (len < (int)sizeof(struct tun_pi))
 			break;
 
@@ -332,7 +371,7 @@ pmd_rx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 		seg->next = NULL;
 		mbuf->packet_type = rte_net_get_ptype(mbuf, NULL,
 						      RTE_PTYPE_ALL_MASK);
-		if (rxq->rxmode->hw_ip_checksum)
+		if (rxq->rxmode->offloads & DEV_RX_OFFLOAD_CHECKSUM)
 			tap_verify_csum(mbuf);
 
 		/* account for the receive frame */
@@ -344,6 +383,44 @@ end:
 	rxq->stats.ibytes += num_rx_bytes;
 
 	return num_rx;
+}
+
+static uint64_t
+tap_tx_offload_get_port_capa(void)
+{
+	/*
+	 * In order to support legacy apps,
+	 * report capabilities also as port capabilities.
+	 */
+	return DEV_TX_OFFLOAD_MULTI_SEGS |
+	       DEV_TX_OFFLOAD_IPV4_CKSUM |
+	       DEV_TX_OFFLOAD_UDP_CKSUM |
+	       DEV_TX_OFFLOAD_TCP_CKSUM;
+}
+
+static uint64_t
+tap_tx_offload_get_queue_capa(void)
+{
+	return DEV_TX_OFFLOAD_MULTI_SEGS |
+	       DEV_TX_OFFLOAD_IPV4_CKSUM |
+	       DEV_TX_OFFLOAD_UDP_CKSUM |
+	       DEV_TX_OFFLOAD_TCP_CKSUM;
+}
+
+static bool
+tap_txq_are_offloads_valid(struct rte_eth_dev *dev, uint64_t offloads)
+{
+	uint64_t port_offloads = dev->data->dev_conf.txmode.offloads;
+	uint64_t queue_supp_offloads = tap_tx_offload_get_queue_capa();
+	uint64_t port_supp_offloads = tap_tx_offload_get_port_capa();
+
+	if ((offloads & (queue_supp_offloads | port_supp_offloads)) !=
+	    offloads)
+		return false;
+	/* Verify we have no conflict with port offloads */
+	if ((port_offloads ^ offloads) & port_supp_offloads)
+		return false;
+	return true;
 }
 
 static void
@@ -432,9 +509,10 @@ pmd_tx_burst(void *queue, struct rte_mbuf **bufs, uint16_t nb_pkts)
 				rte_pktmbuf_mtod(seg, void *);
 			seg = seg->next;
 		}
-		if (mbuf->ol_flags & (PKT_TX_IP_CKSUM | PKT_TX_IPV4) ||
-		    (mbuf->ol_flags & PKT_TX_L4_MASK) == PKT_TX_UDP_CKSUM ||
-		    (mbuf->ol_flags & PKT_TX_L4_MASK) == PKT_TX_TCP_CKSUM) {
+		if (txq->csum &&
+		    ((mbuf->ol_flags & (PKT_TX_IP_CKSUM | PKT_TX_IPV4) ||
+		     (mbuf->ol_flags & PKT_TX_L4_MASK) == PKT_TX_UDP_CKSUM ||
+		     (mbuf->ol_flags & PKT_TX_L4_MASK) == PKT_TX_TCP_CKSUM))) {
 			/* Support only packets with all data in the same seg */
 			if (mbuf->nb_segs > 1)
 				break;
@@ -572,6 +650,17 @@ tap_dev_stop(struct rte_eth_dev *dev)
 static int
 tap_dev_configure(struct rte_eth_dev *dev)
 {
+	uint64_t supp_tx_offloads = tap_tx_offload_get_port_capa();
+	uint64_t tx_offloads = dev->data->dev_conf.txmode.offloads;
+
+	if ((tx_offloads & supp_tx_offloads) != tx_offloads) {
+		rte_errno = ENOTSUP;
+		RTE_LOG(ERR, PMD,
+			"Some Tx offloads are not supported "
+			"requested 0x%" PRIx64 " supported 0x%" PRIx64 "\n",
+			tx_offloads, supp_tx_offloads);
+		return -rte_errno;
+	}
 	if (dev->data->nb_rx_queues > RTE_PMD_TAP_MAX_QUEUES) {
 		RTE_LOG(ERR, PMD,
 			"%s: number of rx queues %d exceeds max num of queues %d\n",
@@ -645,13 +734,12 @@ tap_dev_info(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	dev_info->min_rx_bufsize = 0;
 	dev_info->pci_dev = NULL;
 	dev_info->speed_capa = tap_dev_speed_capa();
-	dev_info->rx_offload_capa = (DEV_RX_OFFLOAD_IPV4_CKSUM |
-				     DEV_RX_OFFLOAD_UDP_CKSUM |
-				     DEV_RX_OFFLOAD_TCP_CKSUM);
-	dev_info->tx_offload_capa =
-		(DEV_TX_OFFLOAD_IPV4_CKSUM |
-		 DEV_TX_OFFLOAD_UDP_CKSUM |
-		 DEV_TX_OFFLOAD_TCP_CKSUM);
+	dev_info->rx_queue_offload_capa = tap_rx_offload_get_queue_capa();
+	dev_info->rx_offload_capa = tap_rx_offload_get_port_capa() |
+				    dev_info->rx_queue_offload_capa;
+	dev_info->tx_queue_offload_capa = tap_tx_offload_get_queue_capa();
+	dev_info->tx_offload_capa = tap_tx_offload_get_port_capa() |
+				    dev_info->tx_queue_offload_capa;
 }
 
 static int
@@ -967,6 +1055,19 @@ tap_rx_queue_setup(struct rte_eth_dev *dev,
 		return -1;
 	}
 
+	/* Verify application offloads are valid for our port and queue. */
+	if (!tap_rxq_are_offloads_valid(dev, rx_conf->offloads)) {
+		rte_errno = ENOTSUP;
+		RTE_LOG(ERR, PMD,
+			"%p: Rx queue offloads 0x%" PRIx64
+			" don't match port offloads 0x%" PRIx64
+			" or supported offloads 0x%" PRIx64 "\n",
+			(void *)dev, rx_conf->offloads,
+			dev->data->dev_conf.rxmode.offloads,
+			(tap_rx_offload_get_port_capa() |
+			 tap_rx_offload_get_queue_capa()));
+		return -rte_errno;
+	}
 	rxq->mp = mp;
 	rxq->trigger_seen = 1; /* force initial burst */
 	rxq->in_port = dev->data->port_id;
@@ -1025,21 +1126,46 @@ tap_tx_queue_setup(struct rte_eth_dev *dev,
 		   uint16_t tx_queue_id,
 		   uint16_t nb_tx_desc __rte_unused,
 		   unsigned int socket_id __rte_unused,
-		   const struct rte_eth_txconf *tx_conf __rte_unused)
+		   const struct rte_eth_txconf *tx_conf)
 {
 	struct pmd_internals *internals = dev->data->dev_private;
+	struct tx_queue *txq;
 	int ret;
 
 	if (tx_queue_id >= dev->data->nb_tx_queues)
 		return -1;
-
 	dev->data->tx_queues[tx_queue_id] = &internals->txq[tx_queue_id];
+	txq = dev->data->tx_queues[tx_queue_id];
+	/*
+	 * Don't verify port offloads for application which
+	 * use the old API.
+	 */
+	if (tx_conf != NULL &&
+	    !!(tx_conf->txq_flags & ETH_TXQ_FLAGS_IGNORE)) {
+		if (tap_txq_are_offloads_valid(dev, tx_conf->offloads)) {
+			txq->csum = !!(tx_conf->offloads &
+					(DEV_TX_OFFLOAD_IPV4_CKSUM |
+					 DEV_TX_OFFLOAD_UDP_CKSUM |
+					 DEV_TX_OFFLOAD_TCP_CKSUM));
+		} else {
+			rte_errno = ENOTSUP;
+			RTE_LOG(ERR, PMD,
+				"%p: Tx queue offloads 0x%" PRIx64
+				" don't match port offloads 0x%" PRIx64
+				" or supported offloads 0x%" PRIx64,
+				(void *)dev, tx_conf->offloads,
+				dev->data->dev_conf.txmode.offloads,
+				tap_tx_offload_get_port_capa());
+			return -rte_errno;
+		}
+	}
 	ret = tap_setup_queue(dev, internals, tx_queue_id, 0);
 	if (ret == -1)
 		return -1;
-
-	RTE_LOG(DEBUG, PMD, "  TX TAP device name %s, qid %d on fd %d\n",
-		internals->name, tx_queue_id, internals->txq[tx_queue_id].fd);
+	RTE_LOG(DEBUG, PMD,
+		"  TX TAP device name %s, qid %d on fd %d csum %s\n",
+		internals->name, tx_queue_id, internals->txq[tx_queue_id].fd,
+		txq->csum ? "on" : "off");
 
 	return 0;
 }
@@ -1094,7 +1220,7 @@ tap_dev_intr_handler(void *cb_arg)
 }
 
 static int
-tap_intr_handle_set(struct rte_eth_dev *dev, int set)
+tap_lsc_intr_handle_set(struct rte_eth_dev *dev, int set)
 {
 	struct pmd_internals *pmd = dev->data->dev_private;
 
@@ -1117,6 +1243,20 @@ tap_intr_handle_set(struct rte_eth_dev *dev, int set)
 	tap_nl_final(pmd->intr_handle.fd);
 	return rte_intr_callback_unregister(&pmd->intr_handle,
 					    tap_dev_intr_handler, dev);
+}
+
+static int
+tap_intr_handle_set(struct rte_eth_dev *dev, int set)
+{
+	int err;
+
+	err = tap_lsc_intr_handle_set(dev, set);
+	if (err)
+		return err;
+	err = tap_rx_intr_vec_set(dev, set);
+	if (err && set)
+		tap_lsc_intr_handle_set(dev, 0);
+	return err;
 }
 
 static const uint32_t*
@@ -1211,13 +1351,13 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 	data = rte_zmalloc_socket(tap_name, sizeof(*data), 0, numa_node);
 	if (!data) {
 		RTE_LOG(ERR, PMD, "TAP Failed to allocate data\n");
-		goto error_exit;
+		goto error_exit_nodev;
 	}
 
 	dev = rte_eth_vdev_allocate(vdev, sizeof(*pmd));
 	if (!dev) {
 		RTE_LOG(ERR, PMD, "TAP Unable to allocate device struct\n");
-		goto error_exit;
+		goto error_exit_nodev;
 	}
 
 	pmd = dev->data->dev_private;
@@ -1251,6 +1391,7 @@ eth_dev_tap_create(struct rte_vdev_device *vdev, char *tap_name,
 
 	pmd->intr_handle.type = RTE_INTR_HANDLE_EXT;
 	pmd->intr_handle.fd = -1;
+	dev->intr_handle = &pmd->intr_handle;
 
 	/* Presetup the fds to -1 as being not valid */
 	for (i = 0; i < RTE_PMD_TAP_MAX_QUEUES; i++) {
@@ -1387,6 +1528,11 @@ error_remote:
 	tap_flow_implicit_flush(pmd, NULL);
 
 error_exit:
+	if (pmd->ioctl_sock > 0)
+		close(pmd->ioctl_sock);
+	rte_eth_dev_release_port(dev);
+
+error_exit_nodev:
 	RTE_LOG(ERR, PMD, "TAP Unable to initialize %s\n",
 		rte_vdev_device_name(vdev));
 
@@ -1406,16 +1552,6 @@ set_interface_name(const char *key __rte_unused,
 	else
 		snprintf(name, RTE_ETH_NAME_MAX_LEN - 1, "%s%d",
 			 DEFAULT_TAP_NAME, (tap_unit - 1));
-
-	return 0;
-}
-
-static int
-set_interface_speed(const char *key __rte_unused,
-		    const char *value,
-		    void *extra_args)
-{
-	*(int *)extra_args = (value) ? atoi(value) : ETH_SPEED_NUM_10G;
 
 	return 0;
 }
@@ -1470,15 +1606,6 @@ rte_pmd_tap_probe(struct rte_vdev_device *dev)
 
 		kvlist = rte_kvargs_parse(params, valid_arguments);
 		if (kvlist) {
-			if (rte_kvargs_count(kvlist, ETH_TAP_SPEED_ARG) == 1) {
-				ret = rte_kvargs_process(kvlist,
-							 ETH_TAP_SPEED_ARG,
-							 &set_interface_speed,
-							 &speed);
-				if (ret == -1)
-					goto leave;
-			}
-
 			if (rte_kvargs_count(kvlist, ETH_TAP_IFACE_ARG) == 1) {
 				ret = rte_kvargs_process(kvlist,
 							 ETH_TAP_IFACE_ARG,
@@ -1576,6 +1703,5 @@ RTE_PMD_REGISTER_VDEV(net_tap, pmd_tap_drv);
 RTE_PMD_REGISTER_ALIAS(net_tap, eth_tap);
 RTE_PMD_REGISTER_PARAM_STRING(net_tap,
 			      ETH_TAP_IFACE_ARG "=<string> "
-			      ETH_TAP_SPEED_ARG "=<int> "
 			      ETH_TAP_MAC_ARG "=" ETH_TAP_MAC_FIXED " "
 			      ETH_TAP_REMOTE_ARG "=<string>");

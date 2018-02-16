@@ -12,6 +12,7 @@ extern "C" {
 #endif
 
 #include <dpaa_rbtree.h>
+#include <rte_eventdev.h>
 
 /* FQ lookups (turn this on for 64bit user-space) */
 #if (__WORDSIZE == 64)
@@ -1130,6 +1131,14 @@ typedef enum qman_cb_dqrr_result (*qman_dpdk_cb_dqrr)(void *event,
 					const struct qm_dqrr_entry *dqrr,
 					void **bd);
 
+/* This callback type is used when handling buffers in dpdk pull mode */
+typedef void (*qman_dpdk_pull_cb_dqrr)(struct qman_fq **fq,
+					struct qm_dqrr_entry **dqrr,
+					void **bufs,
+					int num_bufs);
+
+typedef void (*qman_dpdk_cb_prepare)(struct qm_dqrr_entry *dq, void **bufs);
+
 /*
  * This callback type is used when handling ERNs, FQRNs and FQRLs via MR. They
  * are always consumed after the callback returns.
@@ -1190,8 +1199,10 @@ enum qman_fq_state {
 struct qman_fq_cb {
 	union { /* for dequeued frames */
 		qman_dpdk_cb_dqrr dqrr_dpdk_cb;
+		qman_dpdk_pull_cb_dqrr dqrr_dpdk_pull_cb;
 		qman_cb_dqrr dqrr;
 	};
+	qman_dpdk_cb_prepare dqrr_prepare;
 	qman_cb_mr ern;		/* for s/w ERNs */
 	qman_cb_mr fqs;		/* frame-queue state changes*/
 };
@@ -1208,6 +1219,7 @@ struct qman_fq {
 	/* DPDK Interface */
 	void *dpaa_intf;
 
+	struct rte_event ev;
 	/* affined portal in case of static queue */
 	struct qman_portal *qp;
 
@@ -1297,6 +1309,9 @@ struct qman_cgr {
  * qman_get_portal_index - get portal configuration index
  */
 int qman_get_portal_index(void);
+
+u32 qman_portal_dequeue(struct rte_event ev[], unsigned int poll_limit,
+			void **bufs);
 
 /**
  * qman_affine_channel - return the channel ID of an portal
@@ -1431,7 +1446,21 @@ u32 qman_static_dequeue_get(struct qman_portal *qp);
  * function must be called from the same CPU as that which processed the DQRR
  * entry in the first place.
  */
-void qman_dca(struct qm_dqrr_entry *dq, int park_request);
+void qman_dca(const struct qm_dqrr_entry *dq, int park_request);
+
+/**
+ * qman_dca_index - Perform a Discrete Consumption Acknowledgment
+ * @index: the DQRR index to be consumed
+ * @park_request: indicates whether the held-active @fq should be parked
+ *
+ * Only allowed in DCA-mode portals, for DQRR entries whose handler callback had
+ * previously returned 'qman_cb_dqrr_defer'. NB, as with the other APIs, this
+ * does not take a 'portal' argument but implies the core affine portal from the
+ * cpu that is currently executing the function. For reasons of locking, this
+ * function must be called from the same CPU as that which processed the DQRR
+ * entry in the first place.
+ */
+void qman_dca_index(u8 index, int park_request);
 
 /**
  * qman_eqcr_is_empty - Determine if portal's EQCR is empty
@@ -1699,9 +1728,8 @@ int qman_volatile_dequeue(struct qman_fq *fq, u32 flags, u32 vdqcr);
  */
 int qman_enqueue(struct qman_fq *fq, const struct qm_fd *fd, u32 flags);
 
-int qman_enqueue_multi(struct qman_fq *fq,
-		       const struct qm_fd *fd,
-		int frames_to_send);
+int qman_enqueue_multi(struct qman_fq *fq, const struct qm_fd *fd, u32 *flags,
+		       int frames_to_send);
 
 /**
  * qman_enqueue_multi_fq - Enqueue multiple frames to their respective frame

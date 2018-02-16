@@ -1,34 +1,6 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright 2015 6WIND S.A.
- *   Copyright 2015 Mellanox.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of 6WIND S.A. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright 2015 6WIND S.A.
+ * Copyright 2015 Mellanox.
  */
 
 #define _GNU_SOURCE
@@ -55,7 +27,7 @@
 #include <sys/un.h>
 
 #include <rte_atomic.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_bus_pci.h>
 #include <rte_mbuf.h>
 #include <rte_common.h>
@@ -64,6 +36,7 @@
 #include <rte_malloc.h>
 
 #include "mlx5.h"
+#include "mlx5_glue.h"
 #include "mlx5_rxtx.h"
 #include "mlx5_utils.h"
 
@@ -692,6 +665,7 @@ mlx5_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *info)
 		priv->reta_idx_n : config->ind_table_max_size;
 	info->hash_key_size = priv->rss_conf.rss_key_len;
 	info->speed_capa = priv->link_speed_capa;
+	info->flow_type_rss_offloads = ~MLX5_RSS_HF_MASK;
 	priv_unlock(priv);
 }
 
@@ -885,6 +859,114 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev, int wait_to_complete)
 }
 
 /**
+ * Enable receiving and transmitting traffic.
+ *
+ * @param priv
+ *   Pointer to private structure.
+ */
+static void
+priv_link_start(struct priv *priv)
+{
+	struct rte_eth_dev *dev = priv->dev;
+	int err;
+
+	dev->tx_pkt_burst = priv_select_tx_function(priv, dev);
+	dev->rx_pkt_burst = priv_select_rx_function(priv, dev);
+	err = priv_dev_traffic_enable(priv, dev);
+	if (err)
+		ERROR("%p: error occurred while configuring control flows: %s",
+		      (void *)priv, strerror(err));
+	err = priv_flow_start(priv, &priv->flows);
+	if (err)
+		ERROR("%p: error occurred while configuring flows: %s",
+		      (void *)priv, strerror(err));
+}
+
+/**
+ * Disable receiving and transmitting traffic.
+ *
+ * @param priv
+ *   Pointer to private structure.
+ */
+static void
+priv_link_stop(struct priv *priv)
+{
+	struct rte_eth_dev *dev = priv->dev;
+
+	priv_flow_stop(priv, &priv->flows);
+	priv_dev_traffic_disable(priv, dev);
+	dev->rx_pkt_burst = removed_rx_burst;
+	dev->tx_pkt_burst = removed_tx_burst;
+}
+
+/**
+ * Retrieve physical link information and update rx/tx_pkt_burst callbacks
+ * accordingly.
+ *
+ * @param priv
+ *   Pointer to private structure.
+ * @param wait_to_complete
+ *   Wait for request completion (ignored).
+ */
+int
+priv_link_update(struct priv *priv, int wait_to_complete)
+{
+	struct rte_eth_dev *dev = priv->dev;
+	struct utsname utsname;
+	int ver[3];
+	int ret;
+	struct rte_eth_link dev_link = dev->data->dev_link;
+
+	if (uname(&utsname) == -1 ||
+	    sscanf(utsname.release, "%d.%d.%d",
+		   &ver[0], &ver[1], &ver[2]) != 3 ||
+	    KERNEL_VERSION(ver[0], ver[1], ver[2]) < KERNEL_VERSION(4, 9, 0))
+		ret = mlx5_link_update_unlocked_gset(dev, wait_to_complete);
+	else
+		ret = mlx5_link_update_unlocked_gs(dev, wait_to_complete);
+	/* If lsc interrupt is disabled, should always be ready for traffic. */
+	if (!dev->data->dev_conf.intr_conf.lsc) {
+		priv_link_start(priv);
+		return ret;
+	}
+	/* Re-select burst callbacks only if link status has been changed. */
+	if (!ret && dev_link.link_status != dev->data->dev_link.link_status) {
+		if (dev->data->dev_link.link_status == ETH_LINK_UP)
+			priv_link_start(priv);
+		else
+			priv_link_stop(priv);
+	}
+	return ret;
+}
+
+/**
+ * Querying the link status till it changes to the desired state.
+ * Number of query attempts is bounded by MLX5_MAX_LINK_QUERY_ATTEMPTS.
+ *
+ * @param priv
+ *   Pointer to private structure.
+ * @param status
+ *   Link desired status.
+ *
+ * @return
+ *   0 on success, negative errno value on failure.
+ */
+int
+priv_force_link_status_change(struct priv *priv, int status)
+{
+	int try = 0;
+
+	while (try < MLX5_MAX_LINK_QUERY_ATTEMPTS) {
+		priv_link_update(priv, 0);
+		if (priv->dev->data->dev_link.link_status == status)
+			return 0;
+		try++;
+		sleep(1);
+	}
+	return -EAGAIN;
+}
+
+/**
  * DPDK callback to retrieve physical link information.
  *
  * @param dev
@@ -895,15 +977,13 @@ mlx5_link_update_unlocked_gs(struct rte_eth_dev *dev, int wait_to_complete)
 int
 mlx5_link_update(struct rte_eth_dev *dev, int wait_to_complete)
 {
-	struct utsname utsname;
-	int ver[3];
+	struct priv *priv = dev->data->dev_private;
+	int ret;
 
-	if (uname(&utsname) == -1 ||
-	    sscanf(utsname.release, "%d.%d.%d",
-		   &ver[0], &ver[1], &ver[2]) != 3 ||
-	    KERNEL_VERSION(ver[0], ver[1], ver[2]) < KERNEL_VERSION(4, 9, 0))
-		return mlx5_link_update_unlocked_gset(dev, wait_to_complete);
-	return mlx5_link_update_unlocked_gs(dev, wait_to_complete);
+	priv_lock(priv);
+	ret = priv_link_update(priv, wait_to_complete);
+	priv_unlock(priv);
+	return ret;
 }
 
 /**
@@ -1113,7 +1193,7 @@ priv_link_status_update(struct priv *priv)
 {
 	struct rte_eth_link *link = &priv->dev->data->dev_link;
 
-	mlx5_link_update(priv->dev, 0);
+	priv_link_update(priv, 0);
 	if (((link->link_speed == 0) && link->link_status) ||
 		((link->link_speed != 0) && !link->link_status)) {
 		/*
@@ -1154,7 +1234,7 @@ priv_dev_status_handler(struct priv *priv)
 
 	/* Read all message and acknowledge them. */
 	for (;;) {
-		if (ibv_get_async_event(priv->ctx, &event))
+		if (mlx5_glue->get_async_event(priv->ctx, &event))
 			break;
 		if ((event.event_type == IBV_EVENT_PORT_ACTIVE ||
 			event.event_type == IBV_EVENT_PORT_ERR) &&
@@ -1166,7 +1246,7 @@ priv_dev_status_handler(struct priv *priv)
 		else
 			DEBUG("event type %d on port %d not handled",
 			      event.event_type, event.element.port_num);
-		ibv_ack_async_event(&event);
+		mlx5_glue->ack_async_event(&event);
 	}
 	if (ret & (1 << RTE_ETH_EVENT_INTR_LSC))
 		if (priv_link_status_update(priv))
@@ -1312,8 +1392,6 @@ priv_dev_interrupt_handler_install(struct priv *priv, struct rte_eth_dev *dev)
  *
  * @param priv
  *   Pointer to private data structure.
- * @param dev
- *   Pointer to rte_eth_dev structure.
  * @param up
  *   Nonzero for link up, otherwise link down.
  *
@@ -1321,24 +1399,9 @@ priv_dev_interrupt_handler_install(struct priv *priv, struct rte_eth_dev *dev)
  *   0 on success, errno value on failure.
  */
 static int
-priv_dev_set_link(struct priv *priv, struct rte_eth_dev *dev, int up)
+priv_dev_set_link(struct priv *priv, int up)
 {
-	int err;
-
-	if (up) {
-		err = priv_set_flags(priv, ~IFF_UP, IFF_UP);
-		if (err)
-			return err;
-		dev->tx_pkt_burst = priv_select_tx_function(priv, dev);
-		dev->rx_pkt_burst = priv_select_rx_function(priv, dev);
-	} else {
-		err = priv_set_flags(priv, ~IFF_UP, ~IFF_UP);
-		if (err)
-			return err;
-		dev->rx_pkt_burst = removed_rx_burst;
-		dev->tx_pkt_burst = removed_tx_burst;
-	}
-	return 0;
+	return priv_set_flags(priv, ~IFF_UP, up ? IFF_UP : ~IFF_UP);
 }
 
 /**
@@ -1357,7 +1420,7 @@ mlx5_set_link_down(struct rte_eth_dev *dev)
 	int err;
 
 	priv_lock(priv);
-	err = priv_dev_set_link(priv, dev, 0);
+	err = priv_dev_set_link(priv, 0);
 	priv_unlock(priv);
 	return err;
 }
@@ -1378,7 +1441,7 @@ mlx5_set_link_up(struct rte_eth_dev *dev)
 	int err;
 
 	priv_lock(priv);
-	err = priv_dev_set_link(priv, dev, 1);
+	err = priv_dev_set_link(priv, 1);
 	priv_unlock(priv);
 	return err;
 }
@@ -1452,4 +1515,24 @@ priv_select_rx_function(struct priv *priv, __rte_unused struct rte_eth_dev *dev)
 		DEBUG("selected RX vectorized function");
 	}
 	return rx_pkt_burst;
+}
+
+/**
+ * Check if mlx5 device was removed.
+ *
+ * @param dev
+ *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   1 when device is removed, otherwise 0.
+ */
+int
+mlx5_is_removed(struct rte_eth_dev *dev)
+{
+	struct ibv_device_attr device_attr;
+	struct priv *priv = dev->data->dev_private;
+
+	if (mlx5_glue->query_device(priv->ctx, &device_attr) == EIO)
+		return 1;
+	return 0;
 }

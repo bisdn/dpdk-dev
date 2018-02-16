@@ -329,19 +329,19 @@ extern uint32_t bypass_timeout; /**< Store the NIC bypass watchdog timeout */
  * Store specified sockets on which memory pool to be used by ports
  * is allocated.
  */
-uint8_t port_numa[RTE_MAX_ETHPORTS];
+extern uint8_t port_numa[RTE_MAX_ETHPORTS];
 
 /*
  * Store specified sockets on which RX ring to be used by ports
  * is allocated.
  */
-uint8_t rxring_numa[RTE_MAX_ETHPORTS];
+extern uint8_t rxring_numa[RTE_MAX_ETHPORTS];
 
 /*
  * Store specified sockets on which TX ring to be used by ports
  * is allocated.
  */
-uint8_t txring_numa[RTE_MAX_ETHPORTS];
+extern uint8_t txring_numa[RTE_MAX_ETHPORTS];
 
 extern uint8_t socket_num;
 
@@ -384,7 +384,6 @@ extern int16_t tx_rs_thresh;
 
 extern uint8_t dcb_config;
 extern uint8_t dcb_test;
-extern enum dcb_queue_mapping_mode dcb_q_mapping;
 
 extern uint16_t mbuf_data_size; /**< Mbuf data space size. */
 extern uint32_t param_total_num_mbufs;
@@ -683,6 +682,11 @@ enum print_warning {
 };
 int port_id_is_invalid(portid_t port_id, enum print_warning warning);
 int new_socket_id(unsigned int socket_id);
+
+queueid_t get_allowed_max_nb_rxq(portid_t *pid);
+int check_nb_rxq(queueid_t rxq);
+queueid_t get_allowed_max_nb_txq(portid_t *pid);
+int check_nb_txq(queueid_t txq);
 
 /*
  * Work-around of a compilation error with ICC on invocations of the

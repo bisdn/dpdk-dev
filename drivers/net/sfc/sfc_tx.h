@@ -11,7 +11,7 @@
 #define _SFC_TX_H
 
 #include <rte_mbuf.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 
 #include "efx.h"
 
@@ -59,6 +59,7 @@ struct sfc_txq {
 	efx_txq_t			*common;
 	unsigned int			free_thresh;
 	unsigned int			flags;
+	uint64_t			offloads;
 };
 
 static inline unsigned int
@@ -128,6 +129,9 @@ int sfc_tx_qstart(struct sfc_adapter *sa, unsigned int sw_index);
 void sfc_tx_qstop(struct sfc_adapter *sa, unsigned int sw_index);
 int sfc_tx_start(struct sfc_adapter *sa);
 void sfc_tx_stop(struct sfc_adapter *sa);
+
+uint64_t sfc_tx_get_dev_offload_caps(struct sfc_adapter *sa);
+uint64_t sfc_tx_get_queue_offload_caps(struct sfc_adapter *sa);
 
 /* From 'sfc_tso.c' */
 int sfc_efx_tso_alloc_tsoh_objs(struct sfc_efx_tx_sw_desc *sw_ring,

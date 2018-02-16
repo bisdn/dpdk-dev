@@ -25,6 +25,7 @@
 #include <rte_mempool.h>
 #include <rte_spinlock.h>
 #include <rte_malloc.h>
+#include <rte_mbuf_pool_ops.h>
 
 #include "test.h"
 
@@ -485,6 +486,7 @@ test_mempool(void)
 	struct rte_mempool *mp_nocache = NULL;
 	struct rte_mempool *mp_stack = NULL;
 	struct rte_mempool *default_pool = NULL;
+	const char *default_pool_ops = rte_mbuf_best_mempool_ops();
 
 	rte_atomic32_init(&synchro);
 
@@ -535,8 +537,7 @@ test_mempool(void)
 	rte_mempool_obj_iter(mp_stack, my_obj_init, NULL);
 
 	/* Create a mempool based on Default handler */
-	printf("Testing %s mempool handler\n",
-	       RTE_MBUF_DEFAULT_MEMPOOL_OPS);
+	printf("Testing %s mempool handler\n", default_pool_ops);
 	default_pool = rte_mempool_create_empty("default_pool",
 						MEMPOOL_SIZE,
 						MEMPOOL_ELT_SIZE,
@@ -548,14 +549,12 @@ test_mempool(void)
 		goto err;
 	}
 	if (rte_mempool_set_ops_byname(default_pool,
-				RTE_MBUF_DEFAULT_MEMPOOL_OPS, NULL) < 0) {
-		printf("cannot set %s handler\n",
-			RTE_MBUF_DEFAULT_MEMPOOL_OPS);
+				default_pool_ops, NULL) < 0) {
+		printf("cannot set %s handler\n", default_pool_ops);
 		goto err;
 	}
 	if (rte_mempool_populate_default(default_pool) < 0) {
-		printf("cannot populate %s mempool\n",
-			RTE_MBUF_DEFAULT_MEMPOOL_OPS);
+		printf("cannot populate %s mempool\n", default_pool_ops);
 		goto err;
 	}
 	rte_mempool_obj_iter(default_pool, my_obj_init, NULL);

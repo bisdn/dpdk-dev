@@ -36,7 +36,7 @@
 #include <errno.h>
 #include <unistd.h>
 
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_memcpy.h>
 #include <rte_string_fns.h>
@@ -2318,7 +2318,7 @@ RTE_INIT(avp_init_log);
 static void
 avp_init_log(void)
 {
-	avp_logtype_driver = rte_log_register("pmd.avp.driver");
+	avp_logtype_driver = rte_log_register("pmd.net.avp.driver");
 	if (avp_logtype_driver >= 0)
 		rte_log_set_level(avp_logtype_driver, RTE_LOG_NOTICE);
 }

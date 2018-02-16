@@ -32,7 +32,7 @@
 #include <rte_malloc.h>
 #include <rte_mbuf.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_prefetch.h>
 #include <rte_ip.h>
 #include <rte_udp.h>
@@ -674,6 +674,8 @@ vmxnet3_rx_offload(const Vmxnet3_RxCompDesc *rcd, struct rte_mbuf *rxm)
 			if ((rcd->tcp || rcd->udp) && !rcd->tuc)
 				rxm->ol_flags |= PKT_RX_L4_CKSUM_BAD;
 		}
+	} else {
+		rxm->packet_type = RTE_PTYPE_UNKNOWN;
 	}
 }
 

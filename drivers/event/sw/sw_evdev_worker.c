@@ -57,6 +57,7 @@ sw_event_enqueue_burst(void *port, const struct rte_event ev[], uint16_t num)
 	struct sw_port *p = port;
 	struct sw_evdev *sw = (void *)p->sw;
 	uint32_t sw_inflights = rte_atomic32_read(&sw->inflights);
+	uint32_t credit_update_quanta = sw->credit_update_quanta;
 	int new = 0;
 
 	if (num > PORT_ENQUEUE_MAX_BURST_SIZE)
@@ -70,7 +71,6 @@ sw_event_enqueue_burst(void *port, const struct rte_event ev[], uint16_t num)
 
 	if (p->inflight_credits < new) {
 		/* check if event enqueue brings port over max threshold */
-		uint32_t credit_update_quanta = sw->credit_update_quanta;
 		if (sw_inflights + credit_update_quanta > sw->nb_events_limit)
 			return 0;
 
@@ -81,7 +81,6 @@ sw_event_enqueue_burst(void *port, const struct rte_event ev[], uint16_t num)
 			return 0;
 	}
 
-	uint32_t forwards = 0;
 	for (i = 0; i < num; i++) {
 		int op = ev[i].op;
 		int outstanding = p->outstanding_releases > 0;
@@ -90,7 +89,6 @@ sw_event_enqueue_burst(void *port, const struct rte_event ev[], uint16_t num)
 		p->inflight_credits -= (op == RTE_EVENT_OP_NEW);
 		p->inflight_credits += (op == RTE_EVENT_OP_RELEASE) *
 					outstanding;
-		forwards += (op == RTE_EVENT_OP_FORWARD);
 
 		new_ops[i] = sw_qe_flag_map[op];
 		new_ops[i] &= ~(invalid_qid << QE_FLAG_VALID_SHIFT);
@@ -103,14 +101,11 @@ sw_event_enqueue_burst(void *port, const struct rte_event ev[], uint16_t num)
 			p->outstanding_releases--;
 
 		/* error case: branch to avoid touching p->stats */
-		if (unlikely(invalid_qid)) {
+		if (unlikely(invalid_qid && op != RTE_EVENT_OP_RELEASE)) {
 			p->stats.rx_dropped++;
 			p->inflight_credits++;
 		}
 	}
-
-	/* handle directed port forward credits */
-	p->inflight_credits -= forwards * p->is_directed;
 
 	/* returns number of events actually enqueued */
 	uint32_t enq = enqueue_burst_with_ops(p->rx_worker_ring, ev, i,
@@ -124,6 +119,13 @@ sw_event_enqueue_burst(void *port, const struct rte_event ev[], uint16_t num)
 		p->avg_pkt_ticks += burst_pkt_ticks / NUM_SAMPLES;
 		p->last_dequeue_ticks = 0;
 	}
+
+	/* Replenish credits if enough releases are performed */
+	if (p->inflight_credits >= credit_update_quanta * 2) {
+		rte_atomic32_sub(&sw->inflights, credit_update_quanta);
+		p->inflight_credits -= credit_update_quanta;
+	}
+
 	return enq;
 }
 
@@ -139,41 +141,39 @@ sw_event_dequeue_burst(void *port, struct rte_event *ev, uint16_t num,
 {
 	RTE_SET_USED(wait);
 	struct sw_port *p = (void *)port;
-	struct sw_evdev *sw = (void *)p->sw;
 	struct rte_event_ring *ring = p->cq_worker_ring;
-	uint32_t credit_update_quanta = sw->credit_update_quanta;
 
 	/* check that all previous dequeues have been released */
-	if (!p->is_directed) {
+	if (p->implicit_release) {
+		struct sw_evdev *sw = (void *)p->sw;
+		uint32_t credit_update_quanta = sw->credit_update_quanta;
 		uint16_t out_rels = p->outstanding_releases;
 		uint16_t i;
 		for (i = 0; i < out_rels; i++)
 			sw_event_release(p, i);
+
+		/* Replenish credits if enough releases are performed */
+		if (p->inflight_credits >= credit_update_quanta * 2) {
+			rte_atomic32_sub(&sw->inflights, credit_update_quanta);
+			p->inflight_credits -= credit_update_quanta;
+		}
 	}
 
 	/* returns number of events actually dequeued */
 	uint16_t ndeq = rte_event_ring_dequeue_burst(ring, ev, num, NULL);
 	if (unlikely(ndeq == 0)) {
-		p->outstanding_releases = 0;
 		p->zero_polls++;
 		p->total_polls++;
 		goto end;
 	}
 
-	/* only add credits for directed ports - LB ports send RELEASEs */
-	p->inflight_credits += ndeq * p->is_directed;
-	p->outstanding_releases = ndeq;
+	p->outstanding_releases += ndeq;
 	p->last_dequeue_burst_sz = ndeq;
 	p->last_dequeue_ticks = rte_get_timer_cycles();
 	p->poll_buckets[(ndeq - 1) >> SW_DEQ_STAT_BUCKET_SHIFT]++;
 	p->total_polls++;
 
 end:
-	if (p->inflight_credits >= credit_update_quanta * 2 &&
-			p->inflight_credits > credit_update_quanta + ndeq) {
-		rte_atomic32_sub(&sw->inflights, credit_update_quanta);
-		p->inflight_credits -= credit_update_quanta;
-	}
 	return ndeq;
 }
 

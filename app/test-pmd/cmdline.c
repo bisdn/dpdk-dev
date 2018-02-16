@@ -1,35 +1,6 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2010-2016 Intel Corporation. All rights reserved.
- *   Copyright(c) 2014 6WIND S.A.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2010-2016 Intel Corporation.
+ * Copyright(c) 2014 6WIND S.A.
  */
 
 #include <stdarg.h>
@@ -273,6 +244,9 @@ static void cmd_help_long_parsed(void *parsed_result,
 
 			"set verbose (level)\n"
 			"    Set the debug verbosity level X.\n\n"
+
+			"set log global|(type) (level)\n"
+			"    Set the log level.\n\n"
 
 			"set nbport (num)\n"
 			"    Set number of ports.\n\n"
@@ -671,10 +645,10 @@ static void cmd_help_long_parsed(void *parsed_result,
 			"	Set default traffic Management hierarchy on a port\n\n"
 
 #endif
-			"ddp add (port_id) (profile_path[,output_path])\n"
+			"ddp add (port_id) (profile_path[,backup_profile_path])\n"
 			"    Load a profile package on a port\n\n"
 
-			"ddp del (port_id) (profile_path)\n"
+			"ddp del (port_id) (backup_profile_path)\n"
 			"    Delete a profile package from a port\n\n"
 
 			"ptype mapping get (port_id) (valid_only)\n"
@@ -1538,6 +1512,8 @@ cmd_config_rx_tx_parsed(void *parsed_result,
 			printf("Warning: Either rx or tx queues should be non zero\n");
 			return;
 		}
+		if (check_nb_rxq(res->value) != 0)
+			return;
 		nb_rxq = res->value;
 	}
 	else if (!strcmp(res->name, "txq")) {
@@ -1545,6 +1521,8 @@ cmd_config_rx_tx_parsed(void *parsed_result,
 			printf("Warning: Either rx or tx queues should be non zero\n");
 			return;
 		}
+		if (check_nb_txq(res->value) != 0)
+			return;
 		nb_txq = res->value;
 	}
 	else if (!strcmp(res->name, "rxd")) {
@@ -3051,6 +3029,55 @@ cmdline_parse_inst_t cmd_set_numbers = {
 	},
 };
 
+/* *** SET LOG LEVEL CONFIGURATION *** */
+
+struct cmd_set_log_result {
+	cmdline_fixed_string_t set;
+	cmdline_fixed_string_t log;
+	cmdline_fixed_string_t type;
+	uint32_t level;
+};
+
+static void
+cmd_set_log_parsed(void *parsed_result,
+		   __attribute__((unused)) struct cmdline *cl,
+		   __attribute__((unused)) void *data)
+{
+	struct cmd_set_log_result *res;
+	int ret;
+
+	res = parsed_result;
+	if (!strcmp(res->type, "global"))
+		rte_log_set_global_level(res->level);
+	else {
+		ret = rte_log_set_level_regexp(res->type, res->level);
+		if (ret < 0)
+			printf("Unable to set log level\n");
+	}
+}
+
+cmdline_parse_token_string_t cmd_set_log_set =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_log_result, set, "set");
+cmdline_parse_token_string_t cmd_set_log_log =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_log_result, log, "log");
+cmdline_parse_token_string_t cmd_set_log_type =
+	TOKEN_STRING_INITIALIZER(struct cmd_set_log_result, type, NULL);
+cmdline_parse_token_num_t cmd_set_log_level =
+	TOKEN_NUM_INITIALIZER(struct cmd_set_log_result, level, UINT32);
+
+cmdline_parse_inst_t cmd_set_log = {
+	.f = cmd_set_log_parsed,
+	.data = NULL,
+	.help_str = "set log global|<type> <level>",
+	.tokens = {
+		(void *)&cmd_set_log_set,
+		(void *)&cmd_set_log_log,
+		(void *)&cmd_set_log_type,
+		(void *)&cmd_set_log_level,
+		NULL,
+	},
+};
+
 /* *** SET SEGMENT LENGTHS OF TXONLY PACKETS *** */
 
 struct cmd_set_txpkts_result {
@@ -3702,40 +3729,40 @@ cmd_csum_parsed(void *parsed_result,
 			hw = 1;
 
 		if (!strcmp(res->proto, "ip")) {
-			if (dev_info.tx_offload_capa &
-						DEV_TX_OFFLOAD_IPV4_CKSUM) {
+			if (hw == 0 || (dev_info.tx_offload_capa &
+						DEV_TX_OFFLOAD_IPV4_CKSUM)) {
 				csum_offloads |= DEV_TX_OFFLOAD_IPV4_CKSUM;
 			} else {
 				printf("IP checksum offload is not supported "
 				       "by port %u\n", res->port_id);
 			}
 		} else if (!strcmp(res->proto, "udp")) {
-			if (dev_info.tx_offload_capa &
-						DEV_TX_OFFLOAD_UDP_CKSUM) {
+			if (hw == 0 || (dev_info.tx_offload_capa &
+						DEV_TX_OFFLOAD_UDP_CKSUM)) {
 				csum_offloads |= DEV_TX_OFFLOAD_UDP_CKSUM;
 			} else {
 				printf("UDP checksum offload is not supported "
 				       "by port %u\n", res->port_id);
 			}
 		} else if (!strcmp(res->proto, "tcp")) {
-			if (dev_info.tx_offload_capa &
-						DEV_TX_OFFLOAD_TCP_CKSUM) {
+			if (hw == 0 || (dev_info.tx_offload_capa &
+						DEV_TX_OFFLOAD_TCP_CKSUM)) {
 				csum_offloads |= DEV_TX_OFFLOAD_TCP_CKSUM;
 			} else {
 				printf("TCP checksum offload is not supported "
 				       "by port %u\n", res->port_id);
 			}
 		} else if (!strcmp(res->proto, "sctp")) {
-			if (dev_info.tx_offload_capa &
-						DEV_TX_OFFLOAD_SCTP_CKSUM) {
+			if (hw == 0 || (dev_info.tx_offload_capa &
+						DEV_TX_OFFLOAD_SCTP_CKSUM)) {
 				csum_offloads |= DEV_TX_OFFLOAD_SCTP_CKSUM;
 			} else {
 				printf("SCTP checksum offload is not supported "
 				       "by port %u\n", res->port_id);
 			}
 		} else if (!strcmp(res->proto, "outer-ip")) {
-			if (dev_info.tx_offload_capa &
-					DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM) {
+			if (hw == 0 || (dev_info.tx_offload_capa &
+					DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM)) {
 				csum_offloads |=
 						DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM;
 			} else {
@@ -5833,7 +5860,7 @@ cmdline_parse_token_string_t cmd_setpromisc_portall =
 				 "all");
 cmdline_parse_token_num_t cmd_setpromisc_portnum =
 	TOKEN_NUM_INITIALIZER(struct cmd_set_promisc_mode_result, port_num,
-			      UINT8);
+			      UINT16);
 cmdline_parse_token_string_t cmd_setpromisc_mode =
 	TOKEN_STRING_INITIALIZER(struct cmd_set_promisc_mode_result, mode,
 				 "on#off");
@@ -9873,11 +9900,11 @@ struct cmd_flow_director_result {
 	uint16_t port_dst;
 	cmdline_fixed_string_t verify_tag;
 	uint32_t verify_tag_value;
-	cmdline_ipaddr_t tos;
+	cmdline_fixed_string_t tos;
 	uint8_t tos_value;
-	cmdline_ipaddr_t proto;
+	cmdline_fixed_string_t proto;
 	uint8_t proto_value;
-	cmdline_ipaddr_t ttl;
+	cmdline_fixed_string_t ttl;
 	uint8_t ttl_value;
 	cmdline_fixed_string_t vlan;
 	uint16_t vlan_value;
@@ -10488,7 +10515,7 @@ cmdline_parse_inst_t cmd_add_del_sctp_flow_director = {
 		(void *)&cmd_flow_director_flow_type,
 		(void *)&cmd_flow_director_src,
 		(void *)&cmd_flow_director_ip_src,
-		(void *)&cmd_flow_director_port_dst,
+		(void *)&cmd_flow_director_port_src,
 		(void *)&cmd_flow_director_dst,
 		(void *)&cmd_flow_director_ip_dst,
 		(void *)&cmd_flow_director_port_dst,
@@ -10895,7 +10922,7 @@ cmd_flow_director_flex_mask_parsed(void *parsed_result,
 	struct rte_eth_fdir_info fdir_info;
 	struct rte_eth_fdir_flex_mask flex_mask;
 	struct rte_port *port;
-	uint32_t flow_type_mask;
+	uint64_t flow_type_mask;
 	uint16_t i;
 	int ret;
 
@@ -10948,7 +10975,7 @@ cmd_flow_director_flex_mask_parsed(void *parsed_result,
 			return;
 		}
 		for (i = RTE_ETH_FLOW_UNKNOWN; i < RTE_ETH_FLOW_MAX; i++) {
-			if (flow_type_mask & (1 << i)) {
+			if (flow_type_mask & (1ULL << i)) {
 				flex_mask.flow_type = i;
 				fdir_set_flex_mask(res->port_id, &flex_mask);
 			}
@@ -10957,7 +10984,7 @@ cmd_flow_director_flex_mask_parsed(void *parsed_result,
 		return;
 	}
 	flex_mask.flow_type = str2flowtype(res->flow_type);
-	if (!(flow_type_mask & (1 << flex_mask.flow_type))) {
+	if (!(flow_type_mask & (1ULL << flex_mask.flow_type))) {
 		printf("Flow type %s not supported on port %d\n",
 				res->flow_type, res->port_id);
 		return;
@@ -11319,10 +11346,10 @@ cmd_get_hash_global_config_parsed(void *parsed_result,
 	}
 
 	for (i = 0; i < RTE_ETH_FLOW_MAX; i++) {
-		idx = i / UINT32_BIT;
-		offset = i % UINT32_BIT;
+		idx = i / UINT64_BIT;
+		offset = i % UINT64_BIT;
 		if (!(info.info.global_conf.valid_bit_mask[idx] &
-						(1UL << offset)))
+						(1ULL << offset)))
 			continue;
 		str = flowtype_to_str(i);
 		if (!str)
@@ -11330,7 +11357,7 @@ cmd_get_hash_global_config_parsed(void *parsed_result,
 		printf("Symmetric hash is %s globally for flow type %s "
 							"by port %d\n",
 			((info.info.global_conf.sym_hash_enable_mask[idx] &
-			(1UL << offset)) ? "enabled" : "disabled"), str,
+			(1ULL << offset)) ? "enabled" : "disabled"), str,
 							res->port_id);
 	}
 }
@@ -11391,12 +11418,12 @@ cmd_set_hash_global_config_parsed(void *parsed_result,
 			RTE_ETH_HASH_FUNCTION_DEFAULT;
 
 	ftype = str2flowtype(res->flow_type);
-	idx = ftype / (CHAR_BIT * sizeof(uint32_t));
-	offset = ftype % (CHAR_BIT * sizeof(uint32_t));
-	info.info.global_conf.valid_bit_mask[idx] |= (1UL << offset);
+	idx = ftype / UINT64_BIT;
+	offset = ftype % UINT64_BIT;
+	info.info.global_conf.valid_bit_mask[idx] |= (1ULL << offset);
 	if (!strcmp(res->enable, "enable"))
 		info.info.global_conf.sym_hash_enable_mask[idx] |=
-						(1UL << offset);
+						(1ULL << offset);
 	ret = rte_eth_dev_filter_ctrl(res->port_id, RTE_ETH_FILTER_HASH,
 					RTE_ETH_FILTER_SET, &info);
 	if (ret < 0)
@@ -14484,7 +14511,7 @@ cmd_ddp_add_parsed(
 cmdline_parse_inst_t cmd_ddp_add = {
 	.f = cmd_ddp_add_parsed,
 	.data = NULL,
-	.help_str = "ddp add <port_id> <profile_path[,output_path]>",
+	.help_str = "ddp add <port_id> <profile_path[,backup_profile_path]>",
 	.tokens = {
 		(void *)&cmd_ddp_add_ddp,
 		(void *)&cmd_ddp_add_add,
@@ -14554,7 +14581,7 @@ cmd_ddp_del_parsed(
 cmdline_parse_inst_t cmd_ddp_del = {
 	.f = cmd_ddp_del_parsed,
 	.data = NULL,
-	.help_str = "ddp del <port_id> <profile_path>",
+	.help_str = "ddp del <port_id> <backup_profile_path>",
 	.tokens = {
 		(void *)&cmd_ddp_del_ddp,
 		(void *)&cmd_ddp_del_del,
@@ -16022,6 +16049,7 @@ cmdline_parse_ctx_t main_ctx[] = {
 	(cmdline_parse_inst_t *)&cmd_set_link_down,
 	(cmdline_parse_inst_t *)&cmd_reset,
 	(cmdline_parse_inst_t *)&cmd_set_numbers,
+	(cmdline_parse_inst_t *)&cmd_set_log,
 	(cmdline_parse_inst_t *)&cmd_set_txpkts,
 	(cmdline_parse_inst_t *)&cmd_set_txsplit,
 	(cmdline_parse_inst_t *)&cmd_set_fwd_list,

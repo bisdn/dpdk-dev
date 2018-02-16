@@ -65,10 +65,10 @@
 #define MEMPOOL_CACHE_SZ        PKT_BURST_SZ
 
 /* Number of RX ring descriptors */
-#define NB_RXD                  128
+#define NB_RXD                  1024
 
 /* Number of TX ring descriptors */
-#define NB_TXD                  512
+#define NB_TXD                  1024
 
 /*
  * RX and TX Prefetch, Host, and Write-back threshold values should be
@@ -108,7 +108,7 @@ struct stats {
 	uint64_t rx;
 	uint64_t tx;
 	uint64_t dropped;
-};
+} __rte_cache_aligned;
 
 /* Array of lcore-specific stats */
 static struct stats lcore_stats[RTE_MAX_LCORE];

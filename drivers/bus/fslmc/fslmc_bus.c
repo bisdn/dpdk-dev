@@ -14,7 +14,7 @@
 #include <rte_malloc.h>
 #include <rte_devargs.h>
 #include <rte_memcpy.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 
 #include <rte_fslmc.h>
 #include <fslmc_vfio.h>
@@ -34,6 +34,8 @@ rte_fslmc_get_device_count(enum rte_dpaa2_dev_type device_type)
 		return 0;
 	return rte_fslmc_bus.device_count[device_type];
 }
+
+RTE_DEFINE_PER_LCORE(struct dpaa2_portal_dqrr, dpaa2_held_bufs);
 
 static void
 cleanup_fslmc_device_list(void)
@@ -139,7 +141,7 @@ scan_one_fslmc_device(char *dev_name)
 		dev->dev_type = DPAA2_BPOOL;
 	else if (!strncmp("dpio", t_ptr, 4))
 		dev->dev_type = DPAA2_IO;
-	else if (!strncmp("dpci", t_ptr, 5))
+	else if (!strncmp("dpci", t_ptr, 4))
 		dev->dev_type = DPAA2_CI;
 	else if (!strncmp("dpmcp", t_ptr, 5))
 		dev->dev_type = DPAA2_MPORTAL;

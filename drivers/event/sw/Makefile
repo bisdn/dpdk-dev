@@ -7,6 +7,7 @@ include $(RTE_SDK)/mk/rte.vars.mk
 LIB = librte_pmd_sw_event.a
 
 # build flags
+CFLAGS += -DALLOW_EXPERIMENTAL_API
 CFLAGS += -O3
 CFLAGS += $(WERROR_FLAGS)
 # for older GCC versions, allow us to initialize an event using
@@ -17,6 +18,7 @@ CFLAGS += -Wno-missing-field-initializers
 endif
 endif
 LDLIBS += -lrte_eal -lrte_eventdev -lrte_kvargs -lrte_ring
+LDLIBS += -lrte_mempool -lrte_mbuf
 LDLIBS += -lrte_bus_vdev
 
 # library version
@@ -30,6 +32,7 @@ SRCS-$(CONFIG_RTE_LIBRTE_PMD_SW_EVENTDEV) += sw_evdev.c
 SRCS-$(CONFIG_RTE_LIBRTE_PMD_SW_EVENTDEV) += sw_evdev_worker.c
 SRCS-$(CONFIG_RTE_LIBRTE_PMD_SW_EVENTDEV) += sw_evdev_scheduler.c
 SRCS-$(CONFIG_RTE_LIBRTE_PMD_SW_EVENTDEV) += sw_evdev_xstats.c
+SRCS-$(CONFIG_RTE_LIBRTE_PMD_SW_EVENTDEV) += sw_evdev_selftest.c
 
 # export include files
 SYMLINK-y-include +=

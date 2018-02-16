@@ -8,7 +8,7 @@
  */
 
 #include <rte_dev.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_pci.h>
 #include <rte_bus_pci.h>
@@ -83,6 +83,7 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 {
 	struct sfc_adapter *sa = dev->data->dev_private;
 	const efx_nic_cfg_t *encp = efx_nic_cfg_get(sa->nic);
+	uint64_t txq_offloads_def = 0;
 
 	sfc_log_init(sa, "entry");
 
@@ -104,29 +105,35 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	/* By default packets are dropped if no descriptors are available */
 	dev_info->default_rxconf.rx_drop_en = 1;
 
-	dev_info->rx_offload_capa =
-		DEV_RX_OFFLOAD_IPV4_CKSUM |
-		DEV_RX_OFFLOAD_UDP_CKSUM |
-		DEV_RX_OFFLOAD_TCP_CKSUM;
+	dev_info->rx_queue_offload_capa = sfc_rx_get_queue_offload_caps(sa);
 
-	if ((encp->enc_tunnel_encapsulations_supported != 0) &&
-	    (sa->dp_rx->features & SFC_DP_RX_FEAT_TUNNELS))
-		dev_info->rx_offload_capa |= DEV_RX_OFFLOAD_OUTER_IPV4_CKSUM;
+	/*
+	 * rx_offload_capa includes both device and queue offloads since
+	 * the latter may be requested on a per device basis which makes
+	 * sense when some offloads are needed to be set on all queues.
+	 */
+	dev_info->rx_offload_capa = sfc_rx_get_dev_offload_caps(sa) |
+				    dev_info->rx_queue_offload_capa;
 
-	dev_info->tx_offload_capa =
-		DEV_TX_OFFLOAD_IPV4_CKSUM |
-		DEV_TX_OFFLOAD_UDP_CKSUM |
-		DEV_TX_OFFLOAD_TCP_CKSUM;
+	dev_info->tx_queue_offload_capa = sfc_tx_get_queue_offload_caps(sa);
 
-	if (encp->enc_tunnel_encapsulations_supported != 0)
-		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_OUTER_IPV4_CKSUM;
+	/*
+	 * tx_offload_capa includes both device and queue offloads since
+	 * the latter may be requested on a per device basis which makes
+	 * sense when some offloads are needed to be set on all queues.
+	 */
+	dev_info->tx_offload_capa = sfc_tx_get_dev_offload_caps(sa) |
+				    dev_info->tx_queue_offload_capa;
+
+	if (dev_info->tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+		txq_offloads_def |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
+
+	dev_info->default_txconf.offloads |= txq_offloads_def;
 
 	dev_info->default_txconf.txq_flags = ETH_TXQ_FLAGS_NOXSUMSCTP;
 	if ((~sa->dp_tx->features & SFC_DP_TX_FEAT_VLAN_INSERT) ||
 	    !encp->enc_hw_tx_insert_vlan_enabled)
 		dev_info->default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOVLANOFFL;
-	else
-		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_VLAN_INSERT;
 
 	if (~sa->dp_tx->features & SFC_DP_TX_FEAT_MULTI_SEG)
 		dev_info->default_txconf.txq_flags |= ETH_TXQ_FLAGS_NOMULTSEGS;
@@ -144,9 +151,6 @@ sfc_dev_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 		dev_info->flow_type_rss_offloads = SFC_RSS_OFFLOADS;
 	}
 #endif
-
-	if (sa->tso)
-		dev_info->tx_offload_capa |= DEV_TX_OFFLOAD_TCP_TSO;
 
 	/* Initialize to hardware limits */
 	dev_info->rx_desc_lim.nb_max = EFX_RXQ_MAXNDESCS;
@@ -889,7 +893,13 @@ sfc_dev_set_mtu(struct rte_eth_dev *dev, uint16_t mtu)
 	 * The driver does not use it, but other PMDs update jumbo_frame
 	 * flag and max_rx_pkt_len when MTU is set.
 	 */
-	dev->data->dev_conf.rxmode.jumbo_frame = (mtu > ETHER_MAX_LEN);
+	if (mtu > ETHER_MAX_LEN) {
+		struct rte_eth_rxmode *rxmode = &dev->data->dev_conf.rxmode;
+
+		rxmode->offloads |= DEV_RX_OFFLOAD_JUMBO_FRAME;
+		rxmode->jumbo_frame = 1;
+	}
+
 	dev->data->dev_conf.rxmode.max_rx_pkt_len = sa->port.pdu;
 
 	sfc_adapter_unlock(sa);
@@ -1052,8 +1062,13 @@ sfc_rx_queue_info_get(struct rte_eth_dev *dev, uint16_t rx_queue_id,
 	qinfo->conf.rx_free_thresh = rxq->refill_threshold;
 	qinfo->conf.rx_drop_en = 1;
 	qinfo->conf.rx_deferred_start = rxq_info->deferred_start;
-	qinfo->scattered_rx =
-		((rxq_info->type_flags & EFX_RXQ_FLAG_SCATTER) != 0);
+	qinfo->conf.offloads = DEV_RX_OFFLOAD_IPV4_CKSUM |
+			       DEV_RX_OFFLOAD_UDP_CKSUM |
+			       DEV_RX_OFFLOAD_TCP_CKSUM;
+	if (rxq_info->type_flags & EFX_RXQ_FLAG_SCATTER) {
+		qinfo->conf.offloads |= DEV_RX_OFFLOAD_SCATTER;
+		qinfo->scattered_rx = 1;
+	}
 	qinfo->nb_desc = rxq_info->entries;
 
 	sfc_adapter_unlock(sa);
@@ -1080,6 +1095,7 @@ sfc_tx_queue_info_get(struct rte_eth_dev *dev, uint16_t tx_queue_id,
 	memset(qinfo, 0, sizeof(*qinfo));
 
 	qinfo->conf.txq_flags = txq_info->txq->flags;
+	qinfo->conf.offloads = txq_info->txq->offloads;
 	qinfo->conf.tx_free_thresh = txq_info->txq->free_thresh;
 	qinfo->conf.tx_deferred_start = txq_info->deferred_start;
 	qinfo->nb_desc = txq_info->entries;

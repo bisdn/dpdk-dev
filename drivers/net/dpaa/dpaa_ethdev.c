@@ -28,7 +28,7 @@
 #include <rte_eal.h>
 #include <rte_alarm.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_malloc.h>
 #include <rte_ring.h>
 
@@ -94,6 +94,21 @@ static const struct rte_dpaa_xstats_name_off dpaa_xstats_strings[] = {
 };
 
 static struct rte_dpaa_driver rte_dpaa_pmd;
+
+static inline void
+dpaa_poll_queue_default_config(struct qm_mcc_initfq *opts)
+{
+	memset(opts, 0, sizeof(struct qm_mcc_initfq));
+	opts->we_mask = QM_INITFQ_WE_FQCTRL | QM_INITFQ_WE_CONTEXTA;
+	opts->fqd.fq_ctrl = QM_FQCTRL_AVOIDBLOCK | QM_FQCTRL_CTXASTASHING |
+			   QM_FQCTRL_PREFERINCACHE;
+	opts->fqd.context_a.stashing.exclusive = 0;
+	if (dpaa_svr_family != SVR_LS1046A_FAMILY)
+		opts->fqd.context_a.stashing.annotation_cl =
+						DPAA_IF_RX_ANNOTATION_STASH;
+	opts->fqd.context_a.stashing.data_cl = DPAA_IF_RX_DATA_STASH;
+	opts->fqd.context_a.stashing.context_cl = DPAA_IF_RX_CONTEXT_STASH;
+}
 
 static int
 dpaa_mtu_set(struct rte_eth_dev *dev, uint16_t mtu)
@@ -488,7 +503,11 @@ int dpaa_eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 				   QM_FQCTRL_CTXASTASHING |
 				   QM_FQCTRL_PREFERINCACHE;
 		opts.fqd.context_a.stashing.exclusive = 0;
-		opts.fqd.context_a.stashing.annotation_cl =
+		/* In muticore scenario stashing becomes a bottleneck on LS1046.
+		 * So do not enable stashing in this case
+		 */
+		if (dpaa_svr_family != SVR_LS1046A_FAMILY)
+			opts.fqd.context_a.stashing.annotation_cl =
 						DPAA_IF_RX_ANNOTATION_STASH;
 		opts.fqd.context_a.stashing.data_cl = DPAA_IF_RX_DATA_STASH;
 		opts.fqd.context_a.stashing.context_cl =
@@ -511,7 +530,8 @@ int dpaa_eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 		if (ret)
 			DPAA_PMD_ERR("Channel/Queue association failed. fqid %d"
 				     " ret: %d", rxq->fqid, ret);
-		rxq->cb.dqrr_dpdk_cb = dpaa_rx_cb;
+		rxq->cb.dqrr_dpdk_pull_cb = dpaa_rx_cb;
+		rxq->cb.dqrr_prepare = dpaa_rx_cb_prepare;
 		rxq->is_static = true;
 	}
 	dev->data->rx_queues[queue_idx] = rxq;
@@ -529,6 +549,99 @@ int dpaa_eth_rx_queue_setup(struct rte_eth_dev *dev, uint16_t queue_idx,
 				rxq->fqid, ret);
 		}
 	}
+
+	return 0;
+}
+
+int __rte_experimental
+dpaa_eth_eventq_attach(const struct rte_eth_dev *dev,
+		int eth_rx_queue_id,
+		u16 ch_id,
+		const struct rte_event_eth_rx_adapter_queue_conf *queue_conf)
+{
+	int ret;
+	u32 flags = 0;
+	struct dpaa_if *dpaa_intf = dev->data->dev_private;
+	struct qman_fq *rxq = &dpaa_intf->rx_queues[eth_rx_queue_id];
+	struct qm_mcc_initfq opts = {0};
+
+	if (dpaa_push_mode_max_queue)
+		DPAA_PMD_WARN("PUSH mode already enabled for first %d queues.\n"
+			      "To disable set DPAA_PUSH_QUEUES_NUMBER to 0\n",
+			      dpaa_push_mode_max_queue);
+
+	dpaa_poll_queue_default_config(&opts);
+
+	switch (queue_conf->ev.sched_type) {
+	case RTE_SCHED_TYPE_ATOMIC:
+		opts.fqd.fq_ctrl |= QM_FQCTRL_HOLDACTIVE;
+		/* Reset FQCTRL_AVOIDBLOCK bit as it is unnecessary
+		 * configuration with HOLD_ACTIVE setting
+		 */
+		opts.fqd.fq_ctrl &= (~QM_FQCTRL_AVOIDBLOCK);
+		rxq->cb.dqrr_dpdk_cb = dpaa_rx_cb_atomic;
+		break;
+	case RTE_SCHED_TYPE_ORDERED:
+		DPAA_PMD_ERR("Ordered queue schedule type is not supported\n");
+		return -1;
+	default:
+		opts.fqd.fq_ctrl |= QM_FQCTRL_AVOIDBLOCK;
+		rxq->cb.dqrr_dpdk_cb = dpaa_rx_cb_parallel;
+		break;
+	}
+
+	opts.we_mask = opts.we_mask | QM_INITFQ_WE_DESTWQ;
+	opts.fqd.dest.channel = ch_id;
+	opts.fqd.dest.wq = queue_conf->ev.priority;
+
+	if (dpaa_intf->cgr_rx) {
+		opts.we_mask |= QM_INITFQ_WE_CGID;
+		opts.fqd.cgid = dpaa_intf->cgr_rx[eth_rx_queue_id].cgrid;
+		opts.fqd.fq_ctrl |= QM_FQCTRL_CGE;
+	}
+
+	flags = QMAN_INITFQ_FLAG_SCHED;
+
+	ret = qman_init_fq(rxq, flags, &opts);
+	if (ret) {
+		DPAA_PMD_ERR("Channel/Queue association failed. fqid %d ret:%d",
+			     rxq->fqid, ret);
+		return ret;
+	}
+
+	/* copy configuration which needs to be filled during dequeue */
+	memcpy(&rxq->ev, &queue_conf->ev, sizeof(struct rte_event));
+	dev->data->rx_queues[eth_rx_queue_id] = rxq;
+
+	return ret;
+}
+
+int __rte_experimental
+dpaa_eth_eventq_detach(const struct rte_eth_dev *dev,
+		int eth_rx_queue_id)
+{
+	struct qm_mcc_initfq opts;
+	int ret;
+	u32 flags = 0;
+	struct dpaa_if *dpaa_intf = dev->data->dev_private;
+	struct qman_fq *rxq = &dpaa_intf->rx_queues[eth_rx_queue_id];
+
+	dpaa_poll_queue_default_config(&opts);
+
+	if (dpaa_intf->cgr_rx) {
+		opts.we_mask |= QM_INITFQ_WE_CGID;
+		opts.fqd.cgid = dpaa_intf->cgr_rx[eth_rx_queue_id].cgrid;
+		opts.fqd.fq_ctrl |= QM_FQCTRL_CGE;
+	}
+
+	ret = qman_init_fq(rxq, flags, &opts);
+	if (ret) {
+		DPAA_PMD_ERR("init rx fqid %d failed with ret: %d",
+			     rxq->fqid, ret);
+	}
+
+	rxq->cb.dqrr_dpdk_cb = NULL;
+	dev->data->rx_queues[eth_rx_queue_id] = NULL;
 
 	return 0;
 }
@@ -769,7 +882,7 @@ is_dpaa_supported(struct rte_eth_dev *dev)
 	return is_device_supported(dev, &rte_dpaa_pmd);
 }
 
-int
+int __rte_experimental
 rte_pmd_dpaa_set_tx_loopback(uint8_t port, uint8_t on)
 {
 	struct rte_eth_dev *dev;
@@ -853,13 +966,8 @@ static int dpaa_rx_queue_init(struct qman_fq *fq, struct qman_cgr *cgr_rx,
 		return ret;
 	}
 	fq->is_static = false;
-	opts.we_mask = QM_INITFQ_WE_FQCTRL | QM_INITFQ_WE_CONTEXTA;
-	opts.fqd.fq_ctrl = QM_FQCTRL_AVOIDBLOCK | QM_FQCTRL_CTXASTASHING |
-			   QM_FQCTRL_PREFERINCACHE;
-	opts.fqd.context_a.stashing.exclusive = 0;
-	opts.fqd.context_a.stashing.annotation_cl = DPAA_IF_RX_ANNOTATION_STASH;
-	opts.fqd.context_a.stashing.data_cl = DPAA_IF_RX_DATA_STASH;
-	opts.fqd.context_a.stashing.context_cl = DPAA_IF_RX_CONTEXT_STASH;
+
+	dpaa_poll_queue_default_config(&opts);
 
 	if (cgr_rx) {
 		/* Enable tail drop with cgr on this queue */
@@ -1007,16 +1115,26 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 
 	dpaa_intf->rx_queues = rte_zmalloc(NULL,
 		sizeof(struct qman_fq) * num_rx_fqs, MAX_CACHELINE);
+	if (!dpaa_intf->rx_queues) {
+		DPAA_PMD_ERR("Failed to alloc mem for RX queues\n");
+		return -ENOMEM;
+	}
 
 	/* If congestion control is enabled globally*/
 	if (td_threshold) {
 		dpaa_intf->cgr_rx = rte_zmalloc(NULL,
 			sizeof(struct qman_cgr) * num_rx_fqs, MAX_CACHELINE);
+		if (!dpaa_intf->cgr_rx) {
+			DPAA_PMD_ERR("Failed to alloc mem for cgr_rx\n");
+			ret = -ENOMEM;
+			goto free_rx;
+		}
 
 		ret = qman_alloc_cgrid_range(&cgrid[0], num_rx_fqs, 1, 0);
 		if (ret != num_rx_fqs) {
 			DPAA_PMD_WARN("insufficient CGRIDs available");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto free_rx;
 		}
 	} else {
 		dpaa_intf->cgr_rx = NULL;
@@ -1033,23 +1151,26 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 			dpaa_intf->cgr_rx ? &dpaa_intf->cgr_rx[loop] : NULL,
 			fqid);
 		if (ret)
-			return ret;
+			goto free_rx;
 		dpaa_intf->rx_queues[loop].dpaa_intf = dpaa_intf;
 	}
 	dpaa_intf->nb_rx_queues = num_rx_fqs;
 
-	/* Initialise Tx FQs. Have as many Tx FQ's as number of cores */
+	/* Initialise Tx FQs.free_rx Have as many Tx FQ's as number of cores */
 	num_cores = rte_lcore_count();
 	dpaa_intf->tx_queues = rte_zmalloc(NULL, sizeof(struct qman_fq) *
 		num_cores, MAX_CACHELINE);
-	if (!dpaa_intf->tx_queues)
-		return -ENOMEM;
+	if (!dpaa_intf->tx_queues) {
+		DPAA_PMD_ERR("Failed to alloc mem for TX queues\n");
+		ret = -ENOMEM;
+		goto free_rx;
+	}
 
 	for (loop = 0; loop < num_cores; loop++) {
 		ret = dpaa_tx_queue_init(&dpaa_intf->tx_queues[loop],
 					 fman_intf);
 		if (ret)
-			return ret;
+			goto free_tx;
 		dpaa_intf->tx_queues[loop].dpaa_intf = dpaa_intf;
 	}
 	dpaa_intf->nb_tx_queues = num_cores;
@@ -1086,14 +1207,8 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 		DPAA_PMD_ERR("Failed to allocate %d bytes needed to "
 						"store MAC addresses",
 				ETHER_ADDR_LEN * DPAA_MAX_MAC_FILTER);
-		rte_free(dpaa_intf->cgr_rx);
-		rte_free(dpaa_intf->rx_queues);
-		rte_free(dpaa_intf->tx_queues);
-		dpaa_intf->rx_queues = NULL;
-		dpaa_intf->tx_queues = NULL;
-		dpaa_intf->nb_rx_queues = 0;
-		dpaa_intf->nb_tx_queues = 0;
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto free_tx;
 	}
 
 	/* copy the primary mac address */
@@ -1119,6 +1234,18 @@ dpaa_dev_init(struct rte_eth_dev *eth_dev)
 	fman_if_stats_reset(fman_intf);
 
 	return 0;
+
+free_tx:
+	rte_free(dpaa_intf->tx_queues);
+	dpaa_intf->tx_queues = NULL;
+	dpaa_intf->nb_tx_queues = 0;
+
+free_rx:
+	rte_free(dpaa_intf->cgr_rx);
+	rte_free(dpaa_intf->rx_queues);
+	dpaa_intf->rx_queues = NULL;
+	dpaa_intf->nb_rx_queues = 0;
+	return ret;
 }
 
 static int
@@ -1211,10 +1338,12 @@ rte_dpaa_probe(struct rte_dpaa_driver *dpaa_drv,
 		is_global_init = 1;
 	}
 
-	ret = rte_dpaa_portal_init((void *)1);
-	if (ret) {
-		DPAA_PMD_ERR("Unable to initialize portal");
-		return ret;
+	if (unlikely(!RTE_PER_LCORE(dpaa_io))) {
+		ret = rte_dpaa_portal_init((void *)1);
+		if (ret) {
+			DPAA_PMD_ERR("Unable to initialize portal");
+			return ret;
+		}
 	}
 
 	eth_dev = rte_eth_dev_allocate(dpaa_dev->name);

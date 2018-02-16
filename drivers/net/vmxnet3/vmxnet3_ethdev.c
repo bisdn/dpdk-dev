@@ -27,7 +27,7 @@
 #include <rte_eal.h>
 #include <rte_alarm.h>
 #include <rte_ether.h>
-#include <rte_ethdev.h>
+#include <rte_ethdev_driver.h>
 #include <rte_ethdev_pci.h>
 #include <rte_string_fns.h>
 #include <rte_malloc.h>
@@ -1352,10 +1352,10 @@ RTE_INIT(vmxnet3_init_log);
 static void
 vmxnet3_init_log(void)
 {
-	vmxnet3_logtype_init = rte_log_register("pmd.vmxnet3.init");
+	vmxnet3_logtype_init = rte_log_register("pmd.net.vmxnet3.init");
 	if (vmxnet3_logtype_init >= 0)
 		rte_log_set_level(vmxnet3_logtype_init, RTE_LOG_NOTICE);
-	vmxnet3_logtype_driver = rte_log_register("pmd.vmxnet3.driver");
+	vmxnet3_logtype_driver = rte_log_register("pmd.net.vmxnet3.driver");
 	if (vmxnet3_logtype_driver >= 0)
 		rte_log_set_level(vmxnet3_logtype_driver, RTE_LOG_NOTICE);
 }
